@@ -66,14 +66,27 @@ allowing you to connect to remote services through Kubernetes pods.`,
 			}
 			fmt.Printf("\nConfiguration file: %s\n", absPath)
 			
+			// First, validate the raw YAML file
+			yamlData, err := os.ReadFile(configFile)
+			if err != nil {
+				fmt.Printf("Error reading configuration file: %v\n", err)
+				fmt.Printf("\nFor help with available commands, run: %s --help\n", cmd.CommandPath())
+				return
+			}
+			
+			// Validate YAML structure
+			if err := lib.ValidateConfigYAML(yamlData); err != nil {
+				fmt.Printf("\n❌ Configuration validation error: %v\n", err)
+				fmt.Println("\nPlease fix this error before continuing.")
+				fmt.Printf("For help, run: %s config --help\n", cmd.CommandPath())
+				return
+			}
+			
 			// Try to load and parse the config
 			var config lib.AppConfig
 			if err := viper.Unmarshal(&config); err != nil {
 				fmt.Printf("Error parsing configuration file: %v\n", err)
-				fmt.Println("\nAvailable commands:")
-				fmt.Println("  aproxymate gui      - Start the web GUI")
-				fmt.Println("  aproxymate config   - Manage configuration files")
-				fmt.Println("  aproxymate --help   - Show help")
+				fmt.Printf("\nFor help with available commands, run: %s --help\n", cmd.CommandPath())
 				return
 			}
 			
@@ -95,23 +108,16 @@ allowing you to connect to remote services through Kubernetes pods.`,
 				fmt.Printf("  aproxymate gui --config %s\n", configFile)
 			} else {
 				fmt.Println("\nNo proxy configurations found in config file.")
-				fmt.Println("\nTo add configurations:")
-				fmt.Println("  1. Use the GUI: aproxymate gui")
-				fmt.Println("  2. Edit the config file manually")
-				fmt.Println("  3. Generate sample config: aproxymate config init")
+				fmt.Printf("\nTo add configurations, run: %s config init\n", cmd.CommandPath())
+				fmt.Printf("Or start the GUI: %s gui\n", cmd.CommandPath())
 			}
 		} else {
 			fmt.Println("\nNo configuration file found.")
-			fmt.Println("\nGet started:")
-			fmt.Println("  aproxymate config init   - Create a sample configuration")
-			fmt.Println("  aproxymate gui           - Start the web GUI")
-			fmt.Println("  aproxymate config show   - Show configuration status")
+			fmt.Printf("\nGet started by running: %s config init\n", cmd.CommandPath())
+			fmt.Printf("Or start the GUI: %s gui\n", cmd.CommandPath())
 		}
 		
-		fmt.Println("\nOther commands:")
-		fmt.Println("  aproxymate config show   - Show configuration file status")
-		fmt.Println("  aproxymate config list   - List all configurations")
-		fmt.Println("  aproxymate --help        - Show all available commands")
+		fmt.Printf("\nFor all available commands, run: %s --help\n", cmd.CommandPath())
 	},
 }
 
@@ -141,18 +147,57 @@ func initConfig() {
 		home, err := os.UserHomeDir()
 		cobra.CheckErr(err)
 
-		// Search config in home directory with name "aproxymate" (without extension).
+		// Search config in multiple locations
 		viper.AddConfigPath(home)
-		viper.AddConfigPath(".")
+		viper.AddConfigPath(".")        // Current directory
 		viper.SetConfigType("yaml")
-		viper.SetConfigName("aproxymate")
-		viper.SetConfigName(".aproxymate")
+		
+		// Try multiple config file names in order
+		configNames := []string{"aproxymate", ".aproxymate"}
+		var configFound bool
+		
+		for _, name := range configNames {
+			viper.SetConfigName(name)
+			if err := viper.ReadInConfig(); err == nil {
+				configFound = true
+				break
+			}
+		}
+		
+		if configFound {
+			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+			return
+		}
 	}
 
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	if cfgFile != "" {
+		if err := viper.ReadInConfig(); err == nil {
+			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		} else {
+			fmt.Fprintf(os.Stderr, "Error reading config file %s: %v\n", cfgFile, err)
+		}
+	} else {
+		// Print helpful debug info if config file not found
+		searchPaths := []string{
+			"./aproxymate.yaml",
+			"./.aproxymate.yaml",
+		}
+		
+		home, err := os.UserHomeDir()
+		if err == nil {
+			searchPaths = append(searchPaths,
+				fmt.Sprintf("%s/aproxymate.yaml", home),
+				fmt.Sprintf("%s/.aproxymate.yaml", home),
+			)
+		}
+		
+		fmt.Fprintln(os.Stderr, "Config file not found. Searched locations:")
+		for _, path := range searchPaths {
+			fmt.Fprintf(os.Stderr, "  %s\n", path)
+		}
+		fmt.Fprintln(os.Stderr, "Use --config to specify a config file path")
 	}
 }

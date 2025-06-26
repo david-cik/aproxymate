@@ -89,6 +89,33 @@ func (g *GUI) LoadConfigFromViper() (int, error) {
 	configFileUsed := viper.ConfigFileUsed()
 	g.configFileLoaded = len(config.ProxyConfigs) > 0 && configFileUsed != ""
 
+	// Log configuration validation information
+	if configFileUsed != "" {
+		fmt.Printf("Loaded configuration from: %s\n", configFileUsed)
+		fmt.Printf("Found %d proxy configurations\n", len(config.ProxyConfigs))
+		
+		// Simple validation - check for missing required fields
+		for i, proxy := range config.ProxyConfigs {
+			if proxy.Name == "" {
+				fmt.Printf("Warning: Proxy config #%d is missing 'name' field\n", i+1)
+			}
+			if proxy.KubernetesCluster == "" {
+				fmt.Printf("Warning: Proxy config #%d (%s) is missing 'kubernetes_cluster' field\n", i+1, proxy.Name)
+			}
+			if proxy.RemoteHost == "" {
+				fmt.Printf("Warning: Proxy config #%d (%s) is missing 'remote_host' field\n", i+1, proxy.Name)
+			}
+			if proxy.LocalPort == 0 {
+				fmt.Printf("Warning: Proxy config #%d (%s) is missing or has invalid 'local_port' field\n", i+1, proxy.Name)
+			}
+			if proxy.RemotePort == 0 {
+				fmt.Printf("Warning: Proxy config #%d (%s) is missing or has invalid 'remote_port' field\n", i+1, proxy.Name)
+			}
+		}
+	} else {
+		fmt.Println("No configuration file loaded - using default empty configuration")
+	}
+
 	// If we have actual proxy configs, clear the default empty row and load the configs
 	if len(config.ProxyConfigs) > 0 {
 		// Clear existing rows (including the default empty row)

@@ -177,6 +177,19 @@ var showCmd = &cobra.Command{
 			return
 		}
 
+		// First validate the raw YAML
+		yamlData, err := os.ReadFile(configFile)
+		if err != nil {
+			fmt.Printf("Status: ERROR - Failed to read file (%v)\n", err)
+			return
+		}
+
+		// Validate YAML structure
+		if err := lib.ValidateConfigYAML(yamlData); err != nil {
+			fmt.Printf("Status: ERROR - Configuration validation failed (%v)\n", err)
+			return
+		}
+
 		// Try to load and parse the config
 		var config lib.AppConfig
 		if err := viper.Unmarshal(&config); err != nil {
@@ -184,7 +197,8 @@ var showCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Printf("Status: OK - Configuration loaded successfully\n")
+		fmt.Printf("Status: OK - Configuration loaded and validated successfully\n")
+
 		fmt.Printf("Proxy configurations: %d\n", len(config.ProxyConfigs))
 
 		if len(config.ProxyConfigs) > 0 {
