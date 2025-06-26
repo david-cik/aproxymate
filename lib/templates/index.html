@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>aproxymate - Kubernetes Proxy Manager</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, Cantarell, sans-serif;
+        background-color: #f5f5f5;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        padding: 30px;
+      }
+
+      h1 {
+        color: #333;
+        margin-bottom: 30px;
+        text-align: center;
+      }
+
+      .row-header {
+        display: grid;
+        grid-template-columns: 300px 200px 120px 120px 120px 100px 60px;
+        gap: 15px;
+        padding: 10px 0;
+        font-weight: bold;
+        color: #555;
+        border-bottom: 2px solid #eee;
+        margin-bottom: 20px;
+      }
+
+      .proxy-row {
+        display: grid;
+        grid-template-columns: 300px 200px 120px 120px 120px 100px 60px;
+        gap: 15px;
+        padding: 15px 0;
+        border-bottom: 1px solid #eee;
+        align-items: center;
+      }
+
+      .input-field,
+      .select-field {
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+      }
+
+      .input-field:focus,
+      .select-field:focus {
+        outline: none;
+        border-color: #007bff;
+        box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+      }
+
+      .btn {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background-color 0.3s, opacity 0.2s;
+      }
+
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background-color: #007bff;
+        color: white;
+      }
+
+      .btn-primary:hover {
+        background-color: #0056b3;
+      }
+
+      .btn-danger {
+        background-color: #dc3545;
+        color: white;
+      }
+
+      .btn-danger:hover {
+        background-color: #c82333;
+      }
+
+      /* Simple white trash can icon - middle ground design */
+      .btn-delete {
+        background-color: #dc3545;
+        color: white;
+        font-family: Arial, sans-serif;
+        font-weight: bold;
+        font-size: 16px;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.3s, opacity 0.2s;
+        line-height: 1;
+      }
+
+      .btn-delete:hover {
+        background-color: #c82333;
+      }
+
+      .btn-delete:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .btn-success {
+        background-color: #28a745;
+        color: white;
+      }
+
+      .btn-success:hover {
+        background-color: #218838;
+      }
+
+      .add-row-container {
+        margin-top: 20px;
+        text-align: center;
+      }
+
+      .status {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: bold;
+      }
+
+      .status-connected {
+        background-color: #d4edda;
+        color: #155724;
+      }
+
+      .status-disconnected {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+
+      .control-buttons {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+        justify-content: flex-start;
+        align-items: center;
+      }
+
+      .config-location {
+        margin-left: auto;
+        font-size: 14px;
+        color: #666;
+        background-color: #f8f9fa;
+        padding: 8px 12px;
+        border-radius: 4px;
+        border: 1px solid #dee2e6;
+      }
+
+      .location-label {
+        font-weight: 500;
+        margin-right: 8px;
+      }
+
+      #config-location-text {
+        font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas,
+          "Courier New", monospace;
+        font-size: 13px;
+        color: #495057;
+      }
+
+      .error-message {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+        border-radius: 4px;
+        padding: 12px;
+        margin-bottom: 20px;
+        display: none;
+        position: relative;
+      }
+
+      .error-message.show {
+        display: block;
+      }
+
+      .error-message .close-btn {
+        position: absolute;
+        top: 8px;
+        right: 12px;
+        background: none;
+        border: none;
+        font-size: 20px;
+        color: #721c24;
+        cursor: pointer;
+        line-height: 1;
+      }
+
+      .error-message .close-btn:hover {
+        opacity: 0.7;
+      }
+
+      .success-message {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+        border-radius: 4px;
+        padding: 12px;
+        margin-bottom: 20px;
+        display: none;
+        position: relative;
+      }
+
+      .success-message.show {
+        display: block;
+      }
+
+      .success-message .close-btn {
+        position: absolute;
+        top: 8px;
+        right: 12px;
+        background: none;
+        border: none;
+        font-size: 20px;
+        color: #155724;
+        cursor: pointer;
+        line-height: 1;
+      }
+
+      .success-message .close-btn:hover {
+        opacity: 0.7;
+      }
+
+      @media (max-width: 768px) {
+        .row-header,
+        .proxy-row {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+
+        .proxy-row {
+          padding: 10px;
+          border: 1px solid #eee;
+          border-radius: 4px;
+          margin-bottom: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🚀 aproxymate - Kubernetes Proxy Manager</h1>
+
+      <div class="control-buttons">
+        <button class="btn btn-primary" onclick="addRow()">+ Add Proxy</button>
+        <button class="btn btn-secondary" onclick="saveConfiguration()">
+          💾 Save Config
+        </button>
+        <div class="config-location">
+          <span class="location-label">Config:</span>
+          <span id="config-location-text">Loading...</span>
+        </div>
+      </div>
+
+      <!-- Error and Success Messages -->
+      <div id="error-message" class="error-message">
+        <button class="close-btn" onclick="hideMessage('error-message')">
+          &times;
+        </button>
+        <span id="error-text"></span>
+      </div>
+
+      <div id="success-message" class="success-message">
+        <button class="close-btn" onclick="hideMessage('success-message')">
+          &times;
+        </button>
+        <span id="success-text"></span>
+      </div>
+
+      <div class="row-header">
+        <div>Kubernetes Cluster</div>
+        <div>Remote Host</div>
+        <div>Local Port</div>
+        <div>Remote Port</div>
+        <div>Actions</div>
+        <div>Status</div>
+        <div></div>
+      </div>
+
+      <div id="proxy-rows">
+        {{range .ProxyRows}}
+        <div class="proxy-row" data-id="{{.ID}}">
+          <select
+            class="select-field"
+            data-field="cluster"
+            data-selected="{{.KubernetesCluster}}"
+          >
+            <option value="">Select a cluster...</option>
+            <!-- Options will be populated by JavaScript -->
+          </select>
+          <input
+            type="text"
+            class="input-field"
+            placeholder="remote host"
+            value="{{.RemoteHost}}"
+            data-field="host"
+          />
+          <input
+            type="number"
+            class="input-field"
+            placeholder="8080"
+            value="{{.LocalPort}}"
+            data-field="local-port"
+            min="1"
+            max="65535"
+            title="Local port to bind to. Ports 1-1023 require admin privileges. Consider using ports 1024-65535."
+          />
+          <input
+            type="number"
+            class="input-field"
+            placeholder="5432"
+            value="{{.RemotePort}}"
+            data-field="remote-port"
+            min="1"
+            max="65535"
+            title="Enter a valid port number (1-65535)"
+          />
+          <div>
+            {{if .Connected}}
+            <button class="btn btn-danger" onclick="disconnect('{{.ID}}')">
+              Stop
+            </button>
+            {{else}}
+            <button class="btn btn-success" onclick="connect('{{.ID}}')">
+              Start
+            </button>
+            {{end}}
+          </div>
+          <div>
+            {{if .Connected}}
+            <span class="status status-connected">Connected</span>
+            {{else}}
+            <span class="status status-disconnected">Disconnected</span>
+            {{end}}
+          </div>
+          <div>
+            <button class="btn-delete" onclick="removeRow('{{.ID}}')">⌫</button>
+          </div>
+        </div>
+        {{end}}
+      </div>
+    </div>
+
+    <script>
+      let rowCounter = {{.NextID}};
+      let availableContexts = [];
+
+      // Message handling functions
+      function showErrorMessage(message) {
+          const errorDiv = document.getElementById('error-message');
+          const errorText = document.getElementById('error-text');
+          errorText.textContent = message;
+          errorDiv.classList.add('show');
+
+          // Auto-hide after 10 seconds
+          setTimeout(() => {
+              hideMessage('error-message');
+          }, 10000);
+      }
+
+      function showSuccessMessage(message) {
+          const successDiv = document.getElementById('success-message');
+          const successText = document.getElementById('success-text');
+          successText.textContent = message;
+          successDiv.classList.add('show');
+
+          // Auto-hide after 5 seconds
+          setTimeout(() => {
+              hideMessage('success-message');
+          }, 5000);
+      }
+
+      function hideMessage(messageId) {
+          const messageDiv = document.getElementById(messageId);
+          messageDiv.classList.remove('show');
+      }
+
+      // Load available Kubernetes contexts on page load
+      async function loadContexts() {
+          try {
+              const response = await fetch('/api/contexts');
+              const data = await response.json();
+              availableContexts = data.contexts || [];
+
+              // Populate existing dropdowns
+              populateContextDropdowns();
+          } catch (error) {
+              console.error('Failed to load Kubernetes contexts:', error);
+              availableContexts = [];
+          }
+      }
+
+      // Populate all context dropdowns with available options
+      function populateContextDropdowns() {
+          const selects = document.querySelectorAll('select[data-field="cluster"]');
+          selects.forEach(select => {
+              const selectedValue = select.getAttribute('data-selected') || select.value;
+
+              // Clear existing options except the first one
+              select.innerHTML = '<option value="">Select a cluster...</option>';
+
+              // Add context options
+              availableContexts.forEach(context => {
+                  const option = document.createElement('option');
+                  option.value = context;
+                  option.textContent = context;
+                  if (context === selectedValue) {
+                      option.selected = true;
+                  }
+                  select.appendChild(option);
+              });
+
+              // Set the value after populating options
+              if (selectedValue) {
+                  select.value = selectedValue;
+              }
+          });
+      }
+
+      function addRow() {
+          const rowsContainer = document.getElementById('proxy-rows');
+          const newRow = document.createElement('div');
+          newRow.className = 'proxy-row';
+          newRow.setAttribute('data-id', rowCounter);
+
+          newRow.innerHTML = `
+              <select class="select-field" data-field="cluster">
+                  <option value="">Select a cluster...</option>
+              </select>
+              <input type="text" class="input-field" placeholder="postgres-service" data-field="host">
+              <input type="number" class="input-field" placeholder="8080" data-field="local-port" min="1" max="65535" title="Local port to bind to. Ports 1-1023 require admin privileges. Consider using ports 1024-65535.">
+              <input type="number" class="input-field" placeholder="5432" data-field="remote-port" min="1" max="65535" title="Enter a valid port number (1-65535)">
+              <div>
+                  <button class="btn btn-success" onclick="connect('` + rowCounter + `')">Start</button>
+              </div>
+              <div>
+                  <span class="status status-disconnected">Disconnected</span>
+              </div>
+              <div>
+                  <button class="btn-delete" onclick="removeRow('` + rowCounter + `')">⌫</button>
+              </div>
+          `;
+
+          rowsContainer.appendChild(newRow);
+
+          // Populate the new dropdown with contexts
+          const newSelect = newRow.querySelector('select[data-field="cluster"]');
+          availableContexts.forEach(context => {
+              const option = document.createElement('option');
+              option.value = context;
+              option.textContent = context;
+              newSelect.appendChild(option);
+          });
+
+          rowCounter++;
+          saveRow(rowCounter - 1);
+      }
+
+      function removeRow(id) {
+          if (confirm('Are you sure you want to remove this proxy configuration?')) {
+              const row = document.querySelector(`[data-id="${id}"]`);
+              if (row) {
+                  row.remove();
+                  fetch(`/api/proxy/${id}`, { method: 'DELETE' });
+              }
+          }
+      }
+
+      function connect(id) {
+          console.log('Connect called with id:', id);
+          const row = document.querySelector(`[data-id="${id}"]`);
+          const data = getRowData(row);
+          console.log('Connect data:', { id: id, ...data });
+          const actionsDiv = row.querySelector('div:nth-child(5)'); // The actions column
+
+          // Validate required fields
+          if (!data.cluster || !data.host || !data.localPort || !data.remotePort) {
+              showErrorMessage('Please fill in all required fields before connecting.');
+              return;
+          }
+
+          // Validate port ranges
+          if (data.localPort < 1 || data.localPort > 65535) {
+              showErrorMessage('Local port must be between 1 and 65535.');
+              return;
+          }
+
+          if (data.remotePort < 1 || data.remotePort > 65535) {
+              showErrorMessage('Remote port must be between 1 and 65535.');
+              return;
+          }
+
+          // Warn about privileged ports (1-1023) which typically require root/admin privileges
+          if (data.localPort <= 1023) {
+              if (!confirm(`Warning: Port ${data.localPort} is a privileged port (1-1023) that typically requires administrator privileges to bind to. This may fail unless you're running with elevated permissions.\n\nDo you want to continue anyway?`)) {
+                  return;
+              }
+          }
+
+          // Show connecting state
+          const connectButton = actionsDiv.querySelector('.btn-success');
+          if (connectButton) {
+              connectButton.disabled = true;
+              connectButton.textContent = 'Connecting...';
+          }
+
+          fetch('/api/connect', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: id, ...data })
+          }).then(response => {
+              console.log('Connect response status:', response.status);
+              if (response.ok) {
+                  updateRowStatus(id, true);
+                  showSuccessMessage(`Proxy connected successfully! Local port ${data.localPort} is now forwarding to ${data.host}:${data.remotePort} on cluster ${data.cluster}.`);
+              } else {
+                  return response.text().then(text => {
+                      console.log('Connect error response:', text);
+                      // Reset button on error
+                      if (connectButton) {
+                          connectButton.disabled = false;
+                          connectButton.textContent = 'Start';
+                      }
+
+                      // Provide specific error messages based on the response
+                      let errorMessage = text;
+                      if (text.includes('port') && text.includes('already in use')) {
+                          errorMessage = `Port ${data.localPort} is already in use. Please choose a different local port or stop the service using that port.`;
+                      } else if (text.includes('Port forwarding failed immediately')) {
+                          errorMessage = `Failed to bind to local port ${data.localPort}. This usually means:\n• The port is already in use by another service\n• You need administrator privileges for ports 1-1023\n• There's a network connectivity issue\n\nTry using a different port (e.g., 8000-9000 range) or check what's using port ${data.localPort}.`;
+                      } else if (text.includes('insufficient permissions')) {
+                          errorMessage = `Insufficient permissions to bind to port ${data.localPort}. ${data.localPort <= 1023 ? 'Privileged ports (1-1023) require administrator privileges. Try using a port above 1023.' : 'Please check your system permissions.'}`;
+                      } else if (text.includes('Failed to start port forwarding')) {
+                          errorMessage = `Cannot start port forwarding to local port ${data.localPort}. Please verify:\n• Port ${data.localPort} is not in use\n• You have permission to bind to this port\n• kubectl is properly installed and configured`;
+                      }
+
+                      showErrorMessage(`Failed to connect proxy: ${errorMessage}`);
+                  });
+              }
+          }).catch(error => {
+              console.log('Connect fetch error:', error);
+              // Reset button on error
+              if (connectButton) {
+                  connectButton.disabled = false;
+                  connectButton.textContent = 'Start';
+              }
+              showErrorMessage(`Connection error: ${error.message}`);
+          });
+      }
+
+      function disconnect(id) {
+          console.log('Disconnect called with id:', id);
+          const row = document.querySelector(`[data-id="${id}"]`);
+          console.log('Found row:', row);
+          const actionsDiv = row.querySelector('div:nth-child(5)'); // The actions column
+
+          // Show disconnecting state
+          const disconnectButton = actionsDiv.querySelector('.btn-danger');
+          if (disconnectButton && disconnectButton.textContent.trim() === 'Stop') {
+              disconnectButton.disabled = true;
+              disconnectButton.textContent = 'Stopping...';
+          }
+
+          console.log('Making disconnect request to:', `/api/disconnect/${id}`);
+          fetch(`/api/disconnect/${id}`, { method: 'POST' })
+          .then(response => {
+              console.log('Disconnect response status:', response.status);
+              console.log('Disconnect response ok:', response.ok);
+              if (response.ok) {
+                  updateRowStatus(id, false);
+                  showSuccessMessage('Proxy disconnected successfully.');
+              } else {
+                  return response.text().then(text => {
+                      console.log('Disconnect error response:', text);
+                      // Reset button on error
+                      if (disconnectButton && disconnectButton.textContent.trim() === 'Stopping...') {
+                          disconnectButton.disabled = false;
+                          disconnectButton.textContent = 'Stop';
+                      }
+                      showErrorMessage(`Failed to disconnect proxy: ${text}`);
+                  });
+              }
+          }).catch(error => {
+              console.log('Disconnect fetch error:', error);
+              // Reset button on error
+              if (disconnectButton && disconnectButton.textContent.trim() === 'Stopping...') {
+                  disconnectButton.disabled = false;
+                  disconnectButton.textContent = 'Stop';
+              }
+              showErrorMessage(`Disconnection error: ${error.message}`);
+          });
+      }
+
+      function getRowData(row) {
+          return {
+              cluster: row.querySelector('[data-field="cluster"]').value,
+              host: row.querySelector('[data-field="host"]').value,
+              localPort: parseInt(row.querySelector('[data-field="local-port"]').value) || 0,
+              remotePort: parseInt(row.querySelector('[data-field="remote-port"]').value) || 0
+          };
+      }      function updateRowStatus(id, connected) {
+          const row = document.querySelector(`[data-id="${id}"]`);
+          const actionsDiv = row.querySelector('div:nth-child(5)'); // The actions column
+          const statusDiv = row.querySelector('div:nth-child(6)'); // The status column
+
+          // Add a small fade effect
+          actionsDiv.style.opacity = '0.5';
+          statusDiv.style.opacity = '0.5';
+
+          setTimeout(() => {
+              if (connected) {
+                  actionsDiv.innerHTML = `
+                      <button class="btn btn-danger" onclick="disconnect('` + id + `')">Stop</button>
+                  `;
+                  statusDiv.innerHTML = `
+                      <span class="status status-connected">Connected</span>
+                  `;
+              } else {
+                  actionsDiv.innerHTML = `
+                      <button class="btn btn-success" onclick="connect('` + id + `')">Start</button>
+                  `;
+                  statusDiv.innerHTML = `
+                      <span class="status status-disconnected">Disconnected</span>
+                  `;
+              }
+
+              // Restore opacity
+              actionsDiv.style.opacity = '1';
+              statusDiv.style.opacity = '1';
+          }, 100);
+      }
+
+      function saveRow(id) {
+          const row = document.querySelector(`[data-id="${id}"]`);
+          const data = getRowData(row);
+
+          fetch('/api/proxy', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: id, ...data })
+          });
+      }
+
+      // Auto-save on input change
+      document.addEventListener('input', function(e) {
+          if (e.target.classList.contains('input-field') || e.target.classList.contains('select-field')) {
+              const row = e.target.closest('.proxy-row');
+              const id = row.getAttribute('data-id');
+              setTimeout(() => saveRow(id), 500); // Debounce saves
+          }
+      });
+
+      // Also listen for change events on select elements
+      document.addEventListener('change', function(e) {
+          if (e.target.classList.contains('select-field')) {
+              const row = e.target.closest('.proxy-row');
+              const id = row.getAttribute('data-id');
+              setTimeout(() => saveRow(id), 500); // Debounce saves
+          }
+      });
+
+      // Save current configuration to file
+      async function saveConfiguration() {
+          const button = event.target;
+          const originalText = button.textContent;
+
+          // Validate configuration before saving
+          const allRows = document.querySelectorAll('.proxy-row');
+          let hasValidConfig = false;
+          let validationErrors = [];
+
+          allRows.forEach((row, index) => {
+              const data = getRowData(row);
+              const rowNum = index + 1;
+
+              if (data.cluster || data.host || data.localPort || data.remotePort) {
+                  hasValidConfig = true;
+
+                  // Validate individual fields
+                  if (!data.cluster) {
+                      validationErrors.push(`Row ${rowNum}: Kubernetes cluster is required`);
+                  }
+                  if (!data.host) {
+                      validationErrors.push(`Row ${rowNum}: Remote host is required`);
+                  }
+                  if (!data.localPort || data.localPort <= 0 || data.localPort > 65535) {
+                      validationErrors.push(`Row ${rowNum}: Local port must be between 1 and 65535`);
+                  } else if (data.localPort <= 1023) {
+                      validationErrors.push(`Row ${rowNum}: Warning - Local port ${data.localPort} is privileged and may require administrator permissions`);
+                  }
+                  if (!data.remotePort || data.remotePort <= 0 || data.remotePort > 65535) {
+                      validationErrors.push(`Row ${rowNum}: Remote port must be between 1 and 65535`);
+                  }
+              }
+          });
+
+          if (!hasValidConfig) {
+              showErrorMessage('No configuration to save. Please add at least one proxy configuration.');
+              return;
+          }
+
+          if (validationErrors.length > 0) {
+              showErrorMessage('Configuration validation errors:\n' + validationErrors.join('\n'));
+              return;
+          }
+
+          // Show loading state
+          button.textContent = '💾 Saving...';
+          button.disabled = true;
+
+          try {
+              const response = await fetch('/api/config/save', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' }
+              });
+
+              if (response.ok) {
+                  button.textContent = '✅ Saved!';
+                  showSuccessMessage('Configuration saved successfully');
+                  // Update the config location display
+                  loadConfigLocation();
+                  setTimeout(() => {
+                      button.textContent = originalText;
+                      button.disabled = false;
+                  }, 2000);
+              } else {
+                  const errorText = await response.text();
+                  throw new Error(`Failed to save configuration: ${errorText}`);
+              }
+          } catch (error) {
+              console.error('Error saving configuration:', error);
+              showErrorMessage(`Failed to save configuration: ${error.message}`);
+              button.textContent = '❌ Error';
+              setTimeout(() => {
+                  button.textContent = originalText;
+                  button.disabled = false;
+              }, 2000);
+          }
+      }
+
+      // Load contexts when page loads
+      document.addEventListener('DOMContentLoaded', function() {
+          loadContexts();
+          loadConfigLocation();
+          // Check status every 5 seconds
+          setInterval(checkStatus, 5000);
+          // Update config location every 10 seconds
+          setInterval(loadConfigLocation, 10000);
+      });
+
+      // Load and display the current config save location
+      async function loadConfigLocation() {
+          try {
+              const response = await fetch('/api/config/location');
+              const data = await response.json();
+
+              const locationElement = document.getElementById('config-location-text');
+              if (locationElement) {
+                  if (data.location === "None") {
+                      locationElement.textContent = `None (will save to ${data.nextSaveLocation})`;
+                      locationElement.title = `No config loaded. Next save will create: ${data.nextSaveLocation}`;
+                  } else {
+                      locationElement.textContent = data.location;
+                      locationElement.title = `Config loaded from: ${data.location}`;
+                  }
+              }
+          } catch (error) {
+              console.error('Failed to load config location:', error);
+              const locationElement = document.getElementById('config-location-text');
+              if (locationElement) {
+                  locationElement.textContent = 'Error loading location';
+              }
+          }
+      }
+
+      // Check the actual status of all proxies
+      async function checkStatus() {
+          try {
+              const response = await fetch('/api/status');
+              const data = await response.json();
+
+              // Update UI based on actual status
+              for (const [id, connected] of Object.entries(data.status)) {
+                  const row = document.querySelector(`[data-id="${id}"]`);
+                  if (row) {
+                      const currentStatus = row.querySelector('.status-connected') ? true : false;
+                      if (currentStatus !== connected) {
+                          console.log(`Status changed for ID ${id}: ${currentStatus} -> ${connected}`);
+                          updateRowStatus(id, connected);
+                      }
+                  }
+              }
+          } catch (error) {
+              console.error('Error checking status:', error);
+          }
+      }
+    </script>
+  </body>
+</html>

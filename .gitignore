@@ -1,0 +1,9 @@
+#default binary build output
+aproxymate
+
+# Configuration files
+.aproxymate.yaml
+aproxymate.yaml
+
+# Temporary files
+.env
