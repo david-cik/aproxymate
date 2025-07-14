@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"aproxymate/lib"
-	"log"
+	log "aproxymate/lib"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -30,15 +31,18 @@ The GUI will be available at http://localhost:8080 by default.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		port, _ := cmd.Flags().GetInt("port")
 		
+		log.Info("Starting GUI command", "port", port)
+		
 		gui := lib.NewGUI()
 		
 		// Load configurations from Viper if available
 		if _, err := gui.LoadConfigFromViper(); err != nil {
-			log.Printf("Warning: Failed to load config: %v", err)
+			log.Warn("Failed to load configuration from viper", "error", err)
 		}
 		
 		if err := gui.Start(port); err != nil {
-			log.Fatalf("Failed to start GUI: %v", err)
+			log.Error("Failed to start GUI server", "port", port, "error", err)
+			os.Exit(1)
 		}
 	},
 }

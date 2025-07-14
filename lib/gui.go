@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -91,29 +90,28 @@ func (g *GUI) LoadConfigFromViper() (int, error) {
 
 	// Log configuration validation information
 	if configFileUsed != "" {
-		fmt.Printf("Loaded configuration from: %s\n", configFileUsed)
-		fmt.Printf("Found %d proxy configurations\n", len(config.ProxyConfigs))
+		Info("GUI loading configuration from file", "file", configFileUsed, "num_configs", len(config.ProxyConfigs))
 		
 		// Simple validation - check for missing required fields
 		for i, proxy := range config.ProxyConfigs {
 			if proxy.Name == "" {
-				fmt.Printf("Warning: Proxy config #%d is missing 'name' field\n", i+1)
+				Warn("Configuration validation warning", "issue", "missing name", "config_index", i+1)
 			}
 			if proxy.KubernetesCluster == "" {
-				fmt.Printf("Warning: Proxy config #%d (%s) is missing 'kubernetes_cluster' field\n", i+1, proxy.Name)
+				Warn("Configuration validation warning", "issue", "missing kubernetes_cluster", "config_index", i+1, "name", proxy.Name)
 			}
 			if proxy.RemoteHost == "" {
-				fmt.Printf("Warning: Proxy config #%d (%s) is missing 'remote_host' field\n", i+1, proxy.Name)
+				Warn("Configuration validation warning", "issue", "missing remote_host", "config_index", i+1, "name", proxy.Name)
 			}
 			if proxy.LocalPort == 0 {
-				fmt.Printf("Warning: Proxy config #%d (%s) is missing or has invalid 'local_port' field\n", i+1, proxy.Name)
+				Warn("Configuration validation warning", "issue", "invalid local_port", "config_index", i+1, "name", proxy.Name, "port", proxy.LocalPort)
 			}
 			if proxy.RemotePort == 0 {
-				fmt.Printf("Warning: Proxy config #%d (%s) is missing or has invalid 'remote_port' field\n", i+1, proxy.Name)
+				Warn("Configuration validation warning", "issue", "invalid remote_port", "config_index", i+1, "name", proxy.Name, "port", proxy.RemotePort)
 			}
 		}
 	} else {
-		fmt.Println("No configuration file loaded - using default empty configuration")
+		Debug("No configuration file loaded - using default empty configuration")
 	}
 
 	// If we have actual proxy configs, clear the default empty row and load the configs
@@ -149,28 +147,28 @@ func (g *GUI) LoadConfigFromViper() (int, error) {
 func (g *GUI) Start(port int) error {
 	// Load configuration from Viper
 	if numrows, err := g.LoadConfigFromViper(); err != nil {
-		log.Printf("Warning: Failed to load config: %v", err)
+		Warn("Failed to load configuration", "error", err)
 	} else if numrows > 0 {
-		log.Printf("Loaded %d proxy configurations from config file", numrows)
+		Info("Loaded proxy configurations for GUI", "count", numrows)
 	} else {
-		log.Printf("No proxy configurations found in config file, starting with empty configuration")
+		Debug("Starting GUI with empty configuration")
 	}
 
 	// Clean up any orphaned aproxymate pods from previous sessions
-	log.Println("Cleaning up any orphaned aproxymate pods...")
+	Debug("Starting orphaned pod cleanup")
 	contexts, err := GetKubernetesContexts("")
 	if err != nil {
-		log.Printf("Warning: Could not get Kubernetes contexts for cleanup: %v", err)
+		Warn("Could not get Kubernetes contexts for cleanup", "error", err)
 	} else {
 		for _, contextName := range contexts {
 			kubeClient, err := GetKubernetesClient(KubeConfig{Context: contextName})
 			if err != nil {
-				log.Printf("Warning: Could not create client for context %s: %v", contextName, err)
+				Warn("Could not create Kubernetes client for cleanup", "context", contextName, "error", err)
 				continue
 			}
 			
 			if err := CleanupOrphanedAproxymatePodsForUser(kubeClient, "default"); err != nil {
-				log.Printf("Warning: Failed to cleanup pods in context %s: %v", contextName, err)
+				Warn("Failed to cleanup orphaned pods", "context", contextName, "error", err)
 			}
 		}
 	}
@@ -181,7 +179,7 @@ func (g *GUI) Start(port int) error {
 	
 	go func() {
 		sig := <-sigChan
-		log.Printf("Received signal %v, cleaning up...", sig)
+		Info("Received shutdown signal, cleaning up", "signal", sig.String())
 		g.cleanupAllPods()
 		os.Exit(0)
 	}()
@@ -206,6 +204,7 @@ func (g *GUI) Start(port int) error {
 		Handler: mux,
 	}
 	
+	Info("GUI server starting", "port", port, "url", fmt.Sprintf("http://localhost:%d", port))
 	fmt.Printf("🚀 Aproxymate GUI starting on http://localhost:%d\n", port)
 	return g.server.ListenAndServe()
 }
@@ -325,7 +324,11 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	log.Printf("Connect request: cluster=%s, host=%s, ports=%d->%d", req.KubernetesCluster, req.RemoteHost, req.LocalPort, req.RemotePort)
+	Info("Processing proxy connection request", 
+		"cluster", req.KubernetesCluster, 
+		"host", req.RemoteHost, 
+		"local_port", req.LocalPort, 
+		"remote_port", req.RemotePort)
 	
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -352,7 +355,7 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 		Context: req.KubernetesCluster,
 	})
 	if err != nil {
-		log.Printf("Failed to create Kubernetes client: %v", err)
+		Error("Failed to create Kubernetes client", "cluster", req.KubernetesCluster, "error", err)
 		http.Error(w, fmt.Sprintf("Cannot connect to Kubernetes cluster '%s'. Please check if the cluster is accessible and your kubeconfig is valid. Error: %v", req.KubernetesCluster, err), http.StatusInternalServerError)
 		return
 	}
@@ -371,28 +374,32 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 		RemotePort: req.RemotePort,
 	}
 	
-	log.Printf("Creating socat proxy pod: %s in namespace %s for %s:%d", podName, namespace, req.RemoteHost, req.RemotePort)
+	Info("Creating socat proxy pod", 
+		"pod", podName, 
+		"namespace", namespace, 
+		"target_host", req.RemoteHost, 
+		"target_port", req.RemotePort)
 	
 	// Create the socat proxy pod
 	pod, err := CreateSocatProxyPod(kubeClient, socatConfig)
 	if err != nil {
-		log.Printf("Failed to create socat proxy pod: %v", err)
+		Error("Failed to create socat proxy pod", "pod", podName, "cluster", req.KubernetesCluster, "error", err)
 		http.Error(w, fmt.Sprintf("Failed to create proxy pod in Kubernetes cluster '%s'. This could be due to insufficient permissions, network issues, or cluster configuration problems. Error: %v", req.KubernetesCluster, err), http.StatusInternalServerError)
 		return
 	}
 	
-	log.Printf("Socat pod created: %s, waiting for it to be running...", pod.Name)
+	Info("Socat pod created, waiting for running state", "pod", pod.Name, "namespace", namespace)
 	
 	// Wait for the pod to be running
 	if err := WaitForPodRunning(kubeClient, namespace, podName, 30*time.Second); err != nil {
-		log.Printf("Pod failed to start: %v", err)
+		Error("Pod failed to start", "pod", podName, "namespace", namespace, "error", err)
 		// Clean up the pod
 		DeleteSocatProxyPod(kubeClient, namespace, podName)
 		http.Error(w, fmt.Sprintf("Proxy pod failed to start within 30 seconds. This could be due to resource constraints, image pull issues, or networking problems in cluster '%s'. Error: %v", req.KubernetesCluster, err), http.StatusInternalServerError)
 		return
 	}
 	
-	log.Printf("Socat pod is running, starting kubectl port-forward to pod...")
+	Info("Socat pod is running, starting kubectl port-forward", "pod", podName, "local_port", req.LocalPort, "remote_port", req.RemotePort)
 	
 	// Now start kubectl port-forward to the socat pod
 	cmd := exec.Command("kubectl", 
@@ -407,10 +414,10 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	
-	log.Printf("Starting kubectl port-forward command: %s", cmd.String())
+	Debug("Starting kubectl port-forward command", "command", cmd.String(), "cluster", req.KubernetesCluster)
 	
 	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to start kubectl port-forward: %v", err)
+		Error("Failed to start kubectl port-forward", "command", cmd.String(), "error", err)
 		// Clean up the pod
 		DeleteSocatProxyPod(kubeClient, namespace, podName)
 		
@@ -439,7 +446,7 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 	
 	// Check if the process is still running
 	if cmd.Process == nil {
-		log.Printf("kubectl port-forward process failed to start properly")
+		Error("kubectl port-forward process failed to start properly", "cluster", req.KubernetesCluster)
 		DeleteSocatProxyPod(kubeClient, namespace, podName)
 		http.Error(w, fmt.Sprintf("Port forwarding failed to initialize properly. This might indicate a problem with kubectl or the Kubernetes cluster connection for '%s'.", req.KubernetesCluster), http.StatusInternalServerError)
 		return
@@ -448,7 +455,7 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// Check if the process has already exited
 	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 		exitCode := cmd.ProcessState.ExitCode()
-		log.Printf("kubectl port-forward process exited immediately with code: %d", exitCode)
+		Error("kubectl port-forward process exited immediately", "exit_code", exitCode, "cluster", req.KubernetesCluster)
 		DeleteSocatProxyPod(kubeClient, namespace, podName)
 		
 		// Provide specific error messages based on exit code
@@ -476,7 +483,13 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 	row.SocatPodName = podName
 	row.SocatNamespace = namespace
 	
-	log.Printf("Successfully started proxy: cluster=%s, host=%s, ports=%d->%d, pod=%s, PID=%d", req.KubernetesCluster, req.RemoteHost, req.LocalPort, req.RemotePort, podName, cmd.Process.Pid)
+	Info("Successfully started proxy connection", 
+		"cluster", req.KubernetesCluster, 
+		"host", req.RemoteHost, 
+		"local_port", req.LocalPort, 
+		"remote_port", req.RemotePort, 
+		"pod", podName, 
+		"pid", cmd.Process.Pid)
 	
 	// Monitor the process in a goroutine
 	go func() {
@@ -488,7 +501,7 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 			
 			// Clean up the socat pod
 			if r.SocatPodName != "" {
-				log.Printf("Cleaning up socat pod: %s", r.SocatPodName)
+				Debug("Cleaning up socat pod after connection ended", "pod", r.SocatPodName, "namespace", r.SocatNamespace)
 				if kubeClient, err := GetKubernetesClient(KubeConfig{Context: r.KubernetesCluster}); err == nil {
 					DeleteSocatProxyPod(kubeClient, r.SocatNamespace, r.SocatPodName)
 				}
@@ -499,12 +512,25 @@ func (g *GUI) handleConnect(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				// Check if this was an intentional stop
 				if r.IntentionalStop {
-					log.Printf("Port-forward stopped: cluster=%s, host=%s, ports=%d->%d", r.KubernetesCluster, r.RemoteHost, r.LocalPort, r.RemotePort)
+					Info("Port-forward stopped intentionally", 
+						"cluster", r.KubernetesCluster, 
+						"host", r.RemoteHost, 
+						"local_port", r.LocalPort, 
+						"remote_port", r.RemotePort)
 				} else {
-					log.Printf("Port-forward exited with error: cluster=%s, host=%s, ports=%d->%d, error=%v", r.KubernetesCluster, r.RemoteHost, r.LocalPort, r.RemotePort, err)
+					Error("Port-forward exited with error", 
+						"cluster", r.KubernetesCluster, 
+						"host", r.RemoteHost, 
+						"local_port", r.LocalPort, 
+						"remote_port", r.RemotePort, 
+						"error", err)
 				}
 			} else {
-				log.Printf("Port-forward exited normally: cluster=%s, host=%s, ports=%d->%d", r.KubernetesCluster, r.RemoteHost, r.LocalPort, r.RemotePort)
+				Info("Port-forward exited normally", 
+					"cluster", r.KubernetesCluster, 
+					"host", r.RemoteHost, 
+					"local_port", r.LocalPort, 
+					"remote_port", r.RemotePort)
 			}
 			
 			// Reset the intentional stop flag
@@ -531,21 +557,27 @@ func (g *GUI) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 	
 	row, exists := g.rows[id]
 	if !exists {
-		log.Printf("Row with ID %s not found. Available IDs: %v", id, func() []string {
+		availableIDs := func() []string {
 			var ids []string
 			for k := range g.rows {
 				ids = append(ids, k)
 			}
 			return ids
-		}())
+		}()
+		Warn("Disconnect request for non-existent row", "requested_id", id, "available_ids", availableIDs)
 		http.Error(w, "Proxy not found", http.StatusBadRequest)
 		return
 	}
 	
-	log.Printf("Disconnect request: cluster=%s, host=%s, ports=%d->%d", row.KubernetesCluster, row.RemoteHost, row.LocalPort, row.RemotePort)
+	Info("Disconnect request received", 
+		"id", id,
+		"cluster", row.KubernetesCluster, 
+		"host", row.RemoteHost, 
+		"local_port", row.LocalPort, 
+		"remote_port", row.RemotePort)
 	
 	if !row.Connected {
-		log.Printf("Row with ID %s is not connected", id)
+		Warn("Disconnect request for already disconnected proxy", "id", id)
 		http.Error(w, "Proxy not connected", http.StatusBadRequest)
 		return
 	}
@@ -554,22 +586,27 @@ func (g *GUI) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 	if row.Process != nil {
 		row.IntentionalStop = true // Mark as intentional stop
 		if err := row.Process.Process.Kill(); err != nil {
-			log.Printf("Error killing kubectl process: cluster=%s, host=%s, ports=%d->%d, error=%v", row.KubernetesCluster, row.RemoteHost, row.LocalPort, row.RemotePort, err)
+			Error("Error killing kubectl process", 
+				"cluster", row.KubernetesCluster, 
+				"host", row.RemoteHost, 
+				"local_port", row.LocalPort, 
+				"remote_port", row.RemotePort, 
+				"error", err)
 		}
 		row.Process = nil
 	}
 	
 	// Clean up the socat pod
 	if row.SocatPodName != "" {
-		log.Printf("Cleaning up socat pod: %s in namespace %s", row.SocatPodName, row.SocatNamespace)
+		Debug("Cleaning up socat pod", "pod", row.SocatPodName, "namespace", row.SocatNamespace)
 		kubeClient, err := GetKubernetesClient(KubeConfig{Context: row.KubernetesCluster})
 		if err != nil {
-			log.Printf("Failed to create Kubernetes client for cleanup: %v", err)
+			Error("Failed to create Kubernetes client for cleanup", "cluster", row.KubernetesCluster, "error", err)
 		} else {
 			if err := DeleteSocatProxyPod(kubeClient, row.SocatNamespace, row.SocatPodName); err != nil {
-				log.Printf("Error deleting socat pod %s: %v", row.SocatPodName, err)
+				Error("Error deleting socat pod", "pod", row.SocatPodName, "namespace", row.SocatNamespace, "error", err)
 			} else {
-				log.Printf("Successfully deleted socat pod: %s", row.SocatPodName)
+				Debug("Successfully deleted socat pod", "pod", row.SocatPodName, "namespace", row.SocatNamespace)
 			}
 		}
 		row.SocatPodName = ""
@@ -577,7 +614,11 @@ func (g *GUI) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	row.Connected = false
-	log.Printf("Successfully disconnected proxy: cluster=%s, host=%s, ports=%d->%d", row.KubernetesCluster, row.RemoteHost, row.LocalPort, row.RemotePort)
+	Info("Successfully disconnected proxy", 
+		"cluster", row.KubernetesCluster, 
+		"host", row.RemoteHost, 
+		"local_port", row.LocalPort, 
+		"remote_port", row.RemotePort)
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
@@ -634,16 +675,16 @@ func (g *GUI) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		// Convert to absolute path for display and consistency
 		absConfigFile, err := filepath.Abs(configFile)
 		if err != nil {
-			log.Printf("Error getting absolute path for config file: %v", err)
+			Warn("Error getting absolute path for config file", "file", configFile, "error", err)
 			absConfigFile = configFile // fallback to relative path
 		}
-		log.Printf("No config file was loaded on startup, saving to default location: %s", absConfigFile)
+		Info("No config file was loaded on startup, saving to default location", "file", absConfigFile)
 		savedConfigFile = absConfigFile
 		
 		// Force write using WriteConfigAs to ensure we get the correct filename
 		err = viper.WriteConfigAs(configFile)
 		if err != nil {
-			log.Printf("Error saving config: %v", err)
+			Error("Error saving configuration", "file", configFile, "error", err)
 			http.Error(w, fmt.Sprintf("Failed to save configuration: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -657,21 +698,21 @@ func (g *GUI) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		configFile := viper.ConfigFileUsed()
 		err := viper.WriteConfig()
 		if err != nil {
-			log.Printf("Error writing to existing config file: %v", err)
+			Error("Error writing to existing config file", "file", configFile, "error", err)
 			http.Error(w, fmt.Sprintf("Failed to save configuration: %v", err), http.StatusInternalServerError)
 			return
 		}
 		// Convert to absolute path for display consistency
 		absConfigFile, err := filepath.Abs(configFile)
 		if err != nil {
-			log.Printf("Error getting absolute path for existing config file: %v", err)
+			Warn("Error getting absolute path for existing config file", "file", configFile, "error", err)
 			savedConfigFile = configFile // fallback to original path
 		} else {
 			savedConfigFile = absConfigFile
 		}
 	}
 
-	log.Printf("Configuration saved successfully with %d proxy configs to %s", len(configs), savedConfigFile)
+	Info("Configuration saved successfully", "proxy_configs", len(configs), "file", savedConfigFile)
 
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]string{"status": "success", "message": "Configuration saved successfully"}
@@ -701,7 +742,7 @@ func (g *GUI) handleConfigLocation(w http.ResponseWriter, r *http.Request) {
 	// Convert nextSaveLocation to absolute path for consistent display
 	absNextSaveLocation, err := filepath.Abs(nextSaveLocation)
 	if err != nil {
-		log.Printf("Error getting absolute path for next save location: %v", err)
+		Warn("Error getting absolute path for next save location", "path", nextSaveLocation, "error", err)
 		absNextSaveLocation = nextSaveLocation // fallback to relative path
 	}
 	
@@ -728,7 +769,7 @@ func (g *GUI) handleStatus(w http.ResponseWriter, r *http.Request) {
 		if row.Process != nil {
 			// Check if process is still running
 			if row.Process.ProcessState != nil && row.Process.ProcessState.Exited() {
-				log.Printf("Process for ID %s has exited, updating status", id)
+				Debug("Process has exited, updating status", "id", id, "exit_code", row.Process.ProcessState.ExitCode())
 				row.Connected = false
 				row.Process = nil
 			}
@@ -752,11 +793,16 @@ func (g *GUI) cleanupAllPods() {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	
-	log.Println("Cleaning up all active socat pods...")
+	Info("Cleaning up all active socat pods")
 	
 	for _, row := range g.rows {
 		if row.Connected && row.SocatPodName != "" {
-			log.Printf("Cleaning up pod: cluster=%s, host=%s, ports=%d->%d, pod=%s", row.KubernetesCluster, row.RemoteHost, row.LocalPort, row.RemotePort, row.SocatPodName)
+			Debug("Cleaning up pod during shutdown", 
+				"cluster", row.KubernetesCluster, 
+				"host", row.RemoteHost, 
+				"local_port", row.LocalPort, 
+				"remote_port", row.RemotePort, 
+				"pod", row.SocatPodName)
 			
 			// Kill the kubectl process
 			if row.Process != nil {
@@ -766,14 +812,23 @@ func (g *GUI) cleanupAllPods() {
 			// Delete the pod
 			kubeClient, err := GetKubernetesClient(KubeConfig{Context: row.KubernetesCluster})
 			if err != nil {
-				log.Printf("Error creating client for cleanup: %v", err)
+				Warn("Failed to get Kubernetes client for pod cleanup", 
+					"cluster", row.KubernetesCluster, 
+					"error", err)
 				continue
 			}
 			
 			if err := DeleteSocatProxyPod(kubeClient, row.SocatNamespace, row.SocatPodName); err != nil {
-				log.Printf("Error deleting pod %s: %v", row.SocatPodName, err)
+				Warn("Failed to delete socat pod during cleanup", 
+					"cluster", row.KubernetesCluster, 
+					"namespace", row.SocatNamespace, 
+					"pod", row.SocatPodName, 
+					"error", err)
 			} else {
-				log.Printf("Successfully cleaned up pod: %s", row.SocatPodName)
+				Debug("Successfully deleted socat pod", 
+					"cluster", row.KubernetesCluster, 
+					"namespace", row.SocatNamespace, 
+					"pod", row.SocatPodName)
 			}
 		}
 	}
@@ -796,7 +851,7 @@ func (g *GUI) GetConfigSaveLocation() string {
 	// Convert to absolute path for consistent display
 	absPath, err := filepath.Abs(configFile)
 	if err != nil {
-		log.Printf("Error getting absolute path for config file %s: %v", configFile, err)
+		Warn("Error getting absolute path for config file", "config_file", configFile, "error", err)
 		return configFile // fallback to original path
 	}
 	
@@ -838,6 +893,8 @@ func getSafeUsername() string {
 func (g *GUI) DisplayConfigurations() {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+
+	Debug("Displaying proxy configurations", "count", len(g.rows))
 
 	if len(g.rows) == 0 {
 		fmt.Println("No proxy configurations loaded.")

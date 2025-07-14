@@ -306,21 +306,21 @@ func CleanupOrphanedAproxymatePodsForUser(clientset *kubernetes.Clientset, names
 
 	// Only log if there are orphaned pods to clean up
 	if len(pods.Items) > 0 {
-		fmt.Printf("Found %d orphaned aproxymate pods for user %s\n", len(pods.Items), currentUser)
+		Info("Found orphaned aproxymate pods for cleanup", "user", currentUser, "count", len(pods.Items))
 	}
 
 	// Delete each pod
 	for _, pod := range pods.Items {
-		fmt.Printf("Cleaning up orphaned pod: %s\n", pod.Name)
+		Debug("Cleaning up orphaned pod", "pod", pod.Name, "user", currentUser)
 		err := clientset.CoreV1().Pods(namespace).Delete(
 			context.Background(),
 			pod.Name,
 			metav1.DeleteOptions{},
 		)
 		if err != nil {
-			fmt.Printf("Warning: failed to delete pod %s: %v\n", pod.Name, err)
+			Warn("Failed to delete orphaned pod", "pod", pod.Name, "error", err)
 		} else {
-			fmt.Printf("Successfully deleted orphaned pod: %s\n", pod.Name)
+			Debug("Successfully deleted orphaned pod", "pod", pod.Name)
 		}
 	}
 
@@ -345,21 +345,21 @@ func CleanupAllOrphanedAproxymatePodsInNamespace(clientset *kubernetes.Clientset
 
 	// Only log if there are orphaned pods to clean up
 	if len(pods.Items) > 0 {
-		fmt.Printf("Found %d orphaned aproxymate pods in namespace %s\n", len(pods.Items), namespace)
+		Info("Found orphaned aproxymate pods for cleanup", "namespace", namespace, "count", len(pods.Items))
 	}
 
 	// Delete each pod
 	for _, pod := range pods.Items {
-		fmt.Printf("Cleaning up orphaned pod: %s\n", pod.Name)
+		Debug("Cleaning up orphaned pod", "pod", pod.Name, "namespace", namespace)
 		err := clientset.CoreV1().Pods(namespace).Delete(
 			context.Background(),
 			pod.Name,
 			metav1.DeleteOptions{},
 		)
 		if err != nil {
-			fmt.Printf("Warning: failed to delete pod %s: %v\n", pod.Name, err)
+			Warn("Failed to delete orphaned pod", "pod", pod.Name, "namespace", namespace, "error", err)
 		} else {
-			fmt.Printf("Successfully deleted orphaned pod: %s\n", pod.Name)
+			Debug("Successfully deleted orphaned pod", "pod", pod.Name, "namespace", namespace)
 		}
 	}
 

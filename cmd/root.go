@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"aproxymate/lib"
+	log "aproxymate/lib"
 )
 
 var cfgFile string
@@ -45,12 +46,15 @@ allowing you to connect to remote services through Kubernetes pods.`,
 					"./.aproxymate.yaml",
 				}
 				
+				log.Debug("Searching for configuration files", "paths", configPaths)
+				
 				for _, path := range configPaths {
 					if _, err := os.Stat(path); err == nil {
 						// Found a config file, set it in viper
 						viper.SetConfigFile(path)
 						if err := viper.ReadInConfig(); err == nil {
 							configFile = path
+							log.Info("Found and loaded configuration file", "path", path)
 							break
 						}
 					}
@@ -69,6 +73,7 @@ allowing you to connect to remote services through Kubernetes pods.`,
 			// First, validate the raw YAML file
 			yamlData, err := os.ReadFile(configFile)
 			if err != nil {
+				log.Error("Failed to read configuration file", "file", absPath, "error", err)
 				fmt.Printf("Error reading configuration file: %v\n", err)
 				fmt.Printf("\nFor help with available commands, run: %s --help\n", cmd.CommandPath())
 				return
@@ -76,6 +81,7 @@ allowing you to connect to remote services through Kubernetes pods.`,
 			
 			// Validate YAML structure
 			if err := lib.ValidateConfigYAML(yamlData); err != nil {
+				log.Error("Configuration validation failed", "file", absPath, "error", err)
 				fmt.Printf("\n❌ Configuration validation error: %v\n", err)
 				fmt.Println("\nPlease fix this error before continuing.")
 				fmt.Printf("For help, run: %s config --help\n", cmd.CommandPath())
@@ -85,10 +91,13 @@ allowing you to connect to remote services through Kubernetes pods.`,
 			// Try to load and parse the config
 			var config lib.AppConfig
 			if err := viper.Unmarshal(&config); err != nil {
+				log.Error("Failed to parse configuration file", "file", absPath, "error", err)
 				fmt.Printf("Error parsing configuration file: %v\n", err)
 				fmt.Printf("\nFor help with available commands, run: %s --help\n", cmd.CommandPath())
 				return
 			}
+			
+			lib.LogConfigLoad(absPath, len(config.ProxyConfigs))
 			
 			if len(config.ProxyConfigs) > 0 {
 				fmt.Printf("\nFound %d proxy configuration(s):\n", len(config.ProxyConfigs))
@@ -112,6 +121,7 @@ allowing you to connect to remote services through Kubernetes pods.`,
 				fmt.Printf("Or start the GUI: %s gui\n", cmd.CommandPath())
 			}
 		} else {
+			log.Debug("No configuration file found")
 			fmt.Println("\nNo configuration file found.")
 			fmt.Printf("\nGet started by running: %s config init\n", cmd.CommandPath())
 			fmt.Printf("Or start the GUI: %s gui\n", cmd.CommandPath())
@@ -135,10 +145,50 @@ func init() {
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/aproxymate.yaml)")
+	rootCmd.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().String("log-format", "text", "log format (text, json)")
+	
+	// Bind flags to viper
+	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
+	viper.BindPFlag("log-format", rootCmd.PersistentFlags().Lookup("log-format"))
 }
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
+	// Initialize logger based on flags first
+	logLevel := viper.GetString("log-level")
+	logFormat := viper.GetString("log-format")
+	
+	var level lib.LogLevel
+	switch strings.ToLower(logLevel) {
+	case "debug":
+		level = lib.LevelDebug
+	case "info":
+		level = lib.LevelInfo
+	case "warn", "warning":
+		level = lib.LevelWarn
+	case "error":
+		level = lib.LevelError
+	default:
+		level = lib.LevelInfo
+	}
+	
+	var format lib.LogFormat
+	switch strings.ToLower(logFormat) {
+	case "json":
+		format = lib.FormatJSON
+	case "text":
+		format = lib.FormatText
+	default:
+		format = lib.FormatText
+	}
+	
+	lib.InitLogger(lib.LoggerConfig{
+		Level:  level,
+		Format: format,
+		Output: os.Stderr,
+	})
+
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
@@ -165,6 +215,7 @@ func initConfig() {
 		}
 		
 		if configFound {
+			log.Debug("Configuration file loaded via viper", "file", viper.ConfigFileUsed())
 			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 			return
 		}
@@ -175,8 +226,10 @@ func initConfig() {
 	// If a config file is found, read it in.
 	if cfgFile != "" {
 		if err := viper.ReadInConfig(); err == nil {
+			log.Debug("Configuration file loaded via flag", "file", viper.ConfigFileUsed())
 			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 		} else {
+			log.Error("Failed to read configuration file", "file", cfgFile, "error", err)
 			fmt.Fprintf(os.Stderr, "Error reading config file %s: %v\n", cfgFile, err)
 		}
 	} else {
@@ -194,6 +247,7 @@ func initConfig() {
 			)
 		}
 		
+		log.Debug("No configuration file found", "searched_paths", searchPaths)
 		fmt.Fprintln(os.Stderr, "Config file not found. Searched locations:")
 		for _, path := range searchPaths {
 			fmt.Fprintf(os.Stderr, "  %s\n", path)

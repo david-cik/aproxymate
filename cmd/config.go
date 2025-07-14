@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"aproxymate/lib"
+	log "aproxymate/lib"
 )
 
 // Sample configuration structure
@@ -48,9 +49,12 @@ specified with --output) with sample proxy configurations that you can customize
 		output, _ := cmd.Flags().GetString("output")
 		force, _ := cmd.Flags().GetBool("force")
 
+		log.Info("Initializing configuration file", "output", output, "force", force)
+
 		if output == "" {
 			home, err := os.UserHomeDir()
 			if err != nil {
+				log.Error("Failed to get home directory", "error", err)
 				fmt.Printf("Error getting home directory: %v\n", err)
 				os.Exit(1)
 			}
@@ -59,6 +63,7 @@ specified with --output) with sample proxy configurations that you can customize
 
 		// Check if file exists and force flag is not set
 		if _, err := os.Stat(output); err == nil && !force {
+			log.Warn("Configuration file already exists, not overwriting", "file", output)
 			fmt.Printf("Config file already exists at %s. Use --force to overwrite.\n", output)
 			os.Exit(1)
 		}
@@ -93,15 +98,18 @@ specified with --output) with sample proxy configurations that you can customize
 		// Write to file
 		data, err := yaml.Marshal(&sampleConfig)
 		if err != nil {
+			log.Error("Failed to marshal configuration", "error", err)
 			fmt.Printf("Error marshaling config: %v\n", err)
 			os.Exit(1)
 		}
 
 		if err := os.WriteFile(output, data, 0644); err != nil {
+			log.Error("Failed to write configuration file", "file", output, "error", err)
 			fmt.Printf("Error writing config file: %v\n", err)
 			os.Exit(1)
 		}
 
+		log.Info("Sample configuration file created successfully", "file", output)
 		fmt.Printf("Sample configuration file created at: %s\n", output)
 		fmt.Println("\nYou can now customize this file and use it with:")
 		fmt.Printf("  aproxymate gui --config %s\n", output)
@@ -173,6 +181,7 @@ var showCmd = &cobra.Command{
 
 		// Check if file exists and is readable
 		if _, err := os.Stat(configFile); err != nil {
+			log.Error("Configuration file not accessible", "file", configFile, "error", err)
 			fmt.Printf("Status: ERROR - File not accessible (%v)\n", err)
 			return
 		}
@@ -180,12 +189,14 @@ var showCmd = &cobra.Command{
 		// First validate the raw YAML
 		yamlData, err := os.ReadFile(configFile)
 		if err != nil {
+			log.Error("Failed to read configuration file", "file", configFile, "error", err)
 			fmt.Printf("Status: ERROR - Failed to read file (%v)\n", err)
 			return
 		}
 
 		// Validate YAML structure
 		if err := lib.ValidateConfigYAML(yamlData); err != nil {
+			log.Error("Configuration validation failed", "file", configFile, "error", err)
 			fmt.Printf("Status: ERROR - Configuration validation failed (%v)\n", err)
 			return
 		}
@@ -193,9 +204,12 @@ var showCmd = &cobra.Command{
 		// Try to load and parse the config
 		var config lib.AppConfig
 		if err := viper.Unmarshal(&config); err != nil {
+			log.Error("Failed to parse configuration", "file", configFile, "error", err)
 			fmt.Printf("Status: ERROR - Failed to parse configuration (%v)\n", err)
 			return
 		}
+
+		log.Info("Configuration validation successful", "file", configFile, "proxy_configs", len(config.ProxyConfigs))
 
 		fmt.Printf("Status: OK - Configuration loaded and validated successfully\n")
 
@@ -268,6 +282,7 @@ This command shows detailed information about each proxy configuration including
 		// Try to load and parse the config
 		var config lib.AppConfig
 		if err := viper.Unmarshal(&config); err != nil {
+			log.Error("Failed to parse configuration for listing", "file", configFile, "error", err)
 			fmt.Printf("Error parsing configuration file: %v\n", err)
 			return
 		}

@@ -1,11 +1,16 @@
 /*
 Copyright © 2025 NAME HERE <EMAIL ADDRESS>
-
 */
 package main
 
-import "aproxymate/cmd"
+import (
+	"aproxymate/cmd"
+	"aproxymate/lib"
+)
 
 func main() {
+	// Initialize logger with default settings
+	lib.InitDefaultLogger()
+	
 	cmd.Execute()
 }
