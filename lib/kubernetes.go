@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	log "aproxymate/lib/logger"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -306,21 +308,21 @@ func CleanupOrphanedAproxymatePodsForUser(clientset *kubernetes.Clientset, names
 
 	// Only log if there are orphaned pods to clean up
 	if len(pods.Items) > 0 {
-		Info("Found orphaned aproxymate pods for cleanup", "user", currentUser, "count", len(pods.Items))
+		log.Info("Found orphaned aproxymate pods for cleanup", "user", currentUser, "count", len(pods.Items))
 	}
 
 	// Delete each pod
 	for _, pod := range pods.Items {
-		Debug("Cleaning up orphaned pod", "pod", pod.Name, "user", currentUser)
+		log.Debug("Cleaning up orphaned pod", "pod", pod.Name, "user", currentUser)
 		err := clientset.CoreV1().Pods(namespace).Delete(
 			context.Background(),
 			pod.Name,
 			metav1.DeleteOptions{},
 		)
 		if err != nil {
-			Warn("Failed to delete orphaned pod", "pod", pod.Name, "error", err)
+			log.Warn("Failed to delete orphaned pod", "pod", pod.Name, "error", err)
 		} else {
-			Debug("Successfully deleted orphaned pod", "pod", pod.Name)
+			log.Debug("Successfully deleted orphaned pod", "pod", pod.Name)
 		}
 	}
 
@@ -345,21 +347,21 @@ func CleanupAllOrphanedAproxymatePodsInNamespace(clientset *kubernetes.Clientset
 
 	// Only log if there are orphaned pods to clean up
 	if len(pods.Items) > 0 {
-		Info("Found orphaned aproxymate pods for cleanup", "namespace", namespace, "count", len(pods.Items))
+		log.Info("Found orphaned aproxymate pods for cleanup", "namespace", namespace, "count", len(pods.Items))
 	}
 
 	// Delete each pod
 	for _, pod := range pods.Items {
-		Debug("Cleaning up orphaned pod", "pod", pod.Name, "namespace", namespace)
+		log.Debug("Cleaning up orphaned pod", "pod", pod.Name, "namespace", namespace)
 		err := clientset.CoreV1().Pods(namespace).Delete(
 			context.Background(),
 			pod.Name,
 			metav1.DeleteOptions{},
 		)
 		if err != nil {
-			Warn("Failed to delete orphaned pod", "pod", pod.Name, "namespace", namespace, "error", err)
+			log.Warn("Failed to delete orphaned pod", "pod", pod.Name, "namespace", namespace, "error", err)
 		} else {
-			Debug("Successfully deleted orphaned pod", "pod", pod.Name, "namespace", namespace)
+			log.Debug("Successfully deleted orphaned pod", "pod", pod.Name, "namespace", namespace)
 		}
 	}
 

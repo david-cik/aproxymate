@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"aproxymate/lib"
-	log "aproxymate/lib"
+	log "aproxymate/lib/logger"
 )
 
 // Sample configuration structure

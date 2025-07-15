@@ -5,12 +5,12 @@ package main
 
 import (
 	"aproxymate/cmd"
-	"aproxymate/lib"
+	"aproxymate/lib/logger"
 )
 
 func main() {
 	// Initialize logger with default settings
-	lib.InitDefaultLogger()
+	logger.InitDefaultLogger()
 	
 	cmd.Execute()
 }

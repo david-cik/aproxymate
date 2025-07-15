@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"aproxymate/lib"
-	log "aproxymate/lib"
+	log "aproxymate/lib/logger"
 )
 
 var cfgFile string
@@ -78,18 +78,17 @@ allowing you to connect to remote services through Kubernetes pods.`,
 				fmt.Printf("\nFor help with available commands, run: %s --help\n", cmd.CommandPath())
 				return
 			}
-			
-			// Validate YAML structure
-			if err := lib.ValidateConfigYAML(yamlData); err != nil {
-				log.Error("Configuration validation failed", "file", absPath, "error", err)
-				fmt.Printf("\n❌ Configuration validation error: %v\n", err)
-				fmt.Println("\nPlease fix this error before continuing.")
-				fmt.Printf("For help, run: %s config --help\n", cmd.CommandPath())
-				return
-			}
-			
-			// Try to load and parse the config
-			var config lib.AppConfig
+					// Validate YAML structure
+		if err := lib.ValidateConfigYAML(yamlData); err != nil {
+			log.Error("Configuration validation failed", "file", absPath, "error", err)
+			fmt.Printf("\n❌ Configuration validation error: %v\n", err)
+			fmt.Println("\nPlease fix this error before continuing.")
+			fmt.Printf("For help, run: %s config --help\n", cmd.CommandPath())
+			return
+		}
+		
+		// Try to load and parse the config
+		var config lib.AppConfig
 			if err := viper.Unmarshal(&config); err != nil {
 				log.Error("Failed to parse configuration file", "file", absPath, "error", err)
 				fmt.Printf("Error parsing configuration file: %v\n", err)
@@ -97,7 +96,7 @@ allowing you to connect to remote services through Kubernetes pods.`,
 				return
 			}
 			
-			lib.LogConfigLoad(absPath, len(config.ProxyConfigs))
+			log.LogConfigLoad(absPath, len(config.ProxyConfigs))
 			
 			if len(config.ProxyConfigs) > 0 {
 				fmt.Printf("\nFound %d proxy configuration(s):\n", len(config.ProxyConfigs))
@@ -159,31 +158,31 @@ func initConfig() {
 	logLevel := viper.GetString("log-level")
 	logFormat := viper.GetString("log-format")
 	
-	var level lib.LogLevel
+	var level log.LogLevel
 	switch strings.ToLower(logLevel) {
 	case "debug":
-		level = lib.LevelDebug
+		level = log.LevelDebug
 	case "info":
-		level = lib.LevelInfo
+		level = log.LevelInfo
 	case "warn", "warning":
-		level = lib.LevelWarn
+		level = log.LevelWarn
 	case "error":
-		level = lib.LevelError
+		level = log.LevelError
 	default:
-		level = lib.LevelInfo
+		level = log.LevelInfo
 	}
 	
-	var format lib.LogFormat
+	var format log.LogFormat
 	switch strings.ToLower(logFormat) {
 	case "json":
-		format = lib.FormatJSON
+		format = log.FormatJSON
 	case "text":
-		format = lib.FormatText
+		format = log.FormatText
 	default:
-		format = lib.FormatText
+		format = log.FormatText
 	}
 	
-	lib.InitLogger(lib.LoggerConfig{
+	log.InitLogger(log.LoggerConfig{
 		Level:  level,
 		Format: format,
 		Output: os.Stderr,
