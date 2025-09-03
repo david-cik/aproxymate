@@ -56,40 +56,52 @@ Use --no-open flag to disable automatic browser opening.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		port, _ := cmd.Flags().GetInt("port")
 		noBrowser, _ := cmd.Flags().GetBool("no-open")
-		
-		log.Info("Starting GUI command", "port", port, "auto_launch", !noBrowser)
-		
+
+		log.Debug("Starting GUI command", "port", port, "auto_launch", !noBrowser)
+
 		gui := lib.NewGUI()
-		
+
 		// Load configurations from Viper if available
-		if _, err := gui.LoadConfigFromViper(); err != nil {
-			log.Warn("Failed to load configuration from viper", "error", err)
+		numConfigs, err := gui.LoadConfigFromViper()
+		if err != nil {
+			// Check if this is a missing cluster error
+			if numConfigs > 0 {
+				log.Error("Failed to load configuration due to missing clusters", "error", err)
+				fmt.Printf("❌ Failed to load configuration: %v\n", err)
+				fmt.Println("\nYour configuration has proxy entries but some are missing Kubernetes cluster specifications.")
+				fmt.Println("Please fix this by running:")
+				fmt.Println("  aproxymate config fix")
+				fmt.Println("\nThen start the GUI again:")
+				fmt.Printf("  aproxymate gui --port %d\n", port)
+				os.Exit(1)
+			} else {
+				log.Warn("Failed to load configuration from viper", "error", err)
+			}
 		}
-		
+
 		// Start the GUI server in a goroutine so we can handle browser opening
 		serverErr := make(chan error, 1)
 		serverReady := make(chan bool, 1)
-		
+
 		go func() {
 			if err := gui.Start(port, serverReady); err != nil {
 				serverErr <- err
 			}
 		}()
-		
+
 		// Wait for server to be ready, then open browser if requested
 		if !noBrowser {
 			go func() {
 				// Wait for server to be ready
 				<-serverReady
-				
+
 				url := fmt.Sprintf("http://localhost:%d", port)
-				log.Info("Opening browser", "url", url)
-				
+
 				if err := openBrowser(url); err != nil {
 					log.Warn("Failed to open browser automatically", "url", url, "error", err)
 					fmt.Printf("🌐 Could not open browser automatically. Please visit: %s\n", url)
 				} else {
-					log.Info("Browser opened successfully", "url", url)
+					log.Debug("Browser opened successfully", "url", url)
 				}
 			}()
 		} else {
@@ -97,10 +109,10 @@ Use --no-open flag to disable automatic browser opening.`,
 			// to avoid exiting before the server starts
 			go func() {
 				<-serverReady
-				log.Info("GUI server is ready", "port", port)
+				log.Debug("GUI server is ready", "port", port)
 			}()
 		}
-		
+
 		// Wait for server error or block indefinitely
 		if err := <-serverErr; err != nil {
 			log.Error("Failed to start GUI server", "port", port, "error", err)
@@ -111,7 +123,7 @@ Use --no-open flag to disable automatic browser opening.`,
 
 func init() {
 	rootCmd.AddCommand(guiCmd)
-	
+
 	// Add flags for the gui command
 	guiCmd.Flags().IntP("port", "p", 8080, "Port to run the GUI web server on")
 	guiCmd.Flags().Bool("no-open", false, "Disable automatic browser opening")

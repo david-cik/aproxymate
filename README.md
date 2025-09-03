@@ -68,6 +68,43 @@ aproxymate config list
 
 Shows all proxy configurations defined in your config file.
 
+#### Import RDS endpoints from AWS
+
+```bash
+aproxymate config rds-import --cluster eks-prod --region us-west-2 --profile production
+```
+
+Automatically discovers RDS instances and clusters in your AWS account and adds them to your configuration file. This command requires:
+
+- **AWS Profile**: Specify via `--profile` flag or `AWS_PROFILE` environment variable
+- **AWS Region**: Specify via `--region` flag or `AWS_REGION` environment variable
+- **Kubernetes Cluster**: The cluster name to associate with the discovered endpoints
+
+Additional options:
+
+- `--engines mysql,postgres`: Filter by database engine types
+- `--starting-port 4000`: Specify starting local port number
+- `--dry-run`: Preview changes without saving
+- `--output /path/to/config.yaml`: Specify output file
+
+Examples:
+
+```bash
+# Import all RDS endpoints for production
+aproxymate config rds-import --cluster eks-prod --region us-west-2 --profile production
+
+# Import only MySQL and PostgreSQL endpoints
+aproxymate config rds-import --cluster eks-dev --region us-east-1 --profile dev --engines mysql,postgres
+
+# Preview what would be imported
+aproxymate config rds-import --cluster eks-staging --region eu-west-1 --profile staging --dry-run
+
+# Using environment variables
+export AWS_PROFILE=production
+export AWS_REGION=us-west-2
+aproxymate config rds-import --cluster eks-prod
+```
+
 ### Using a custom configuration file
 
 ```bash
@@ -142,6 +179,40 @@ proxy_configs:
 
 Then use the GUI to start and stop individual proxy connections as needed.
 
+### Import and manage AWS RDS endpoints
+
+Automatically discover and configure access to your AWS RDS databases:
+
+```bash
+# Set up AWS credentials
+export AWS_PROFILE=production
+export AWS_REGION=us-west-2
+
+# Import all RDS endpoints for your production cluster
+aproxymate config rds-import --cluster eks-prod
+
+# Start the GUI to manage connections
+aproxymate gui
+```
+
+This will:
+
+1. Connect to AWS using your specified profile and region
+2. Discover all available RDS instances and clusters
+3. Generate proxy configurations with unique local ports
+4. Add them to your configuration file
+5. Allow you to start/stop database connections through the web interface
+
+You can then connect to your RDS databases locally:
+
+```bash
+# Connect to a PostgreSQL RDS instance
+psql -h localhost -p 3001 -U myuser mydatabase
+
+# Connect to a MySQL RDS cluster
+mysql -h localhost -P 3002 -u myuser -p mydatabase
+```
+
 ## Configuration
 
 Aproxymate uses YAML configuration files to manage proxy settings and your kubeconfig file to connect to Kubernetes clusters.
@@ -176,6 +247,30 @@ Aproxymate uses your kubeconfig file to connect to Kubernetes clusters. You can 
 - `--config`: Path to the aproxymate configuration file
 - The `kubernetes_cluster` field in your config should match a context name in your kubeconfig file
 
+### AWS Configuration (for RDS import)
+
+To use the AWS RDS import feature, you need:
+
+1. **AWS CLI configured** with profiles:
+
+   ```bash
+   aws configure --profile production
+   aws configure --profile staging
+   ```
+
+2. **IAM permissions** for the AWS profile to list RDS resources:
+
+   - `rds:DescribeDBInstances`
+   - `rds:DescribeDBClusters`
+
+3. **Environment variables** (optional):
+   ```bash
+   export AWS_PROFILE=production
+   export AWS_REGION=us-west-2
+   ```
+
+The RDS import feature requires explicit specification of both AWS profile and region to prevent accidental operations on unintended accounts or regions.
+
 ### Available Commands
 
 ```bash
@@ -185,6 +280,7 @@ aproxymate gui --port 9090   # Start GUI on custom port
 aproxymate config init       # Create sample configuration file
 aproxymate config show       # Show configuration file status
 aproxymate config list       # List all proxy configurations
+aproxymate config rds-import # Import RDS endpoints from AWS
 aproxymate --help           # Show help
 ```
 

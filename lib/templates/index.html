@@ -19,7 +19,9 @@
       }
 
       .container {
-        max-width: 1200px;
+        max-width: 85%;
+        min-width: 800px;
+        width: 100%;
         margin: 0 auto;
         background-color: white;
         border-radius: 8px;
@@ -35,7 +37,7 @@
 
       .row-header {
         display: grid;
-        grid-template-columns: 300px 200px 120px 120px 120px 100px 60px;
+        grid-template-columns: 200px minmax(300px, 1fr) 120px 120px 120px 100px 60px;
         gap: 15px;
         padding: 10px 0;
         font-weight: bold;
@@ -44,9 +46,33 @@
         margin-bottom: 20px;
       }
 
+      .sortable-header {
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        transition: color 0.2s;
+      }
+
+      .sortable-header:hover {
+        color: #007bff;
+      }
+
+      .sort-indicator {
+        font-size: 12px;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+      }
+
+      .sortable-header.active .sort-indicator {
+        opacity: 1;
+        color: #007bff;
+      }
+
       .proxy-row {
         display: grid;
-        grid-template-columns: 300px 200px 120px 120px 120px 100px 60px;
+        grid-template-columns: 200px minmax(300px, 1fr) 120px 120px 120px 100px 60px;
         gap: 15px;
         padding: 15px 0;
         border-bottom: 1px solid #eee;
@@ -60,6 +86,15 @@
         border-radius: 4px;
         font-size: 14px;
         transition: border-color 0.3s;
+      }
+
+      .input-field[data-field="host"] {
+        font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas,
+          "Courier New", monospace;
+        font-size: 13px;
+        background-color: #f8f9fa;
+        word-break: break-all;
+        min-width: 0;
       }
 
       .input-field:focus,
@@ -187,6 +222,56 @@
         color: #495057;
       }
 
+      .search-container {
+        margin-bottom: 20px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .search-input {
+        flex: 1;
+        max-width: 400px;
+        padding: 10px 16px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+      }
+
+      .search-input:focus {
+        outline: none;
+        border-color: #007bff;
+        box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+      }
+
+      .search-clear {
+        background: none;
+        border: none;
+        font-size: 18px;
+        color: #999;
+        cursor: pointer;
+        padding: 5px;
+        margin-left: -35px;
+        border-radius: 50%;
+        transition: background-color 0.2s;
+      }
+
+      .search-clear:hover {
+        background-color: #f0f0f0;
+        color: #666;
+      }
+
+      .search-stats {
+        font-size: 14px;
+        color: #666;
+        margin-left: 10px;
+      }
+
+      .proxy-row.hidden {
+        display: none;
+      }
+
       .error-message {
         background-color: #f8d7da;
         color: #721c24;
@@ -250,6 +335,12 @@
       }
 
       @media (max-width: 768px) {
+        .container {
+          min-width: auto;
+          max-width: 100%;
+          padding: 15px;
+        }
+
         .row-header,
         .proxy-row {
           grid-template-columns: 1fr;
@@ -261,6 +352,18 @@
           border: 1px solid #eee;
           border-radius: 4px;
           margin-bottom: 10px;
+        }
+
+        .control-buttons {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
+        }
+
+        .config-location {
+          margin-left: 0;
+          order: -1;
+          text-align: center;
         }
       }
     </style>
@@ -295,13 +398,48 @@
         <span id="success-text"></span>
       </div>
 
+      <!-- Search Container -->
+      <div class="search-container">
+        <input
+          type="text"
+          id="search-input"
+          class="search-input"
+          placeholder="🔍 Search proxies by cluster, host, or port..."
+          oninput="searchProxies()"
+        />
+        <button
+          class="search-clear"
+          onclick="clearSearch()"
+          title="Clear search"
+          style="display: none"
+        >
+          ×
+        </button>
+        <div id="search-stats" class="search-stats"></div>
+      </div>
+
       <div class="row-header">
-        <div>Kubernetes Cluster</div>
-        <div>Remote Host</div>
-        <div>Local Port</div>
-        <div>Remote Port</div>
+        <div class="sortable-header" onclick="sortTable('cluster')">
+          Kubernetes Cluster
+          <span class="sort-indicator" data-sort="cluster">↕</span>
+        </div>
+        <div class="sortable-header" onclick="sortTable('host')">
+          Remote Host
+          <span class="sort-indicator" data-sort="host">↕</span>
+        </div>
+        <div class="sortable-header" onclick="sortTable('localPort')">
+          Local Port
+          <span class="sort-indicator" data-sort="localPort">↕</span>
+        </div>
+        <div class="sortable-header" onclick="sortTable('remotePort')">
+          Remote Port
+          <span class="sort-indicator" data-sort="remotePort">↕</span>
+        </div>
         <div>Actions</div>
-        <div>Status</div>
+        <div class="sortable-header" onclick="sortTable('status')">
+          Status
+          <span class="sort-indicator" data-sort="status">↕</span>
+        </div>
         <div></div>
       </div>
 
@@ -482,6 +620,9 @@
 
           rowCounter++;
           saveRow(rowCounter - 1);
+
+          // Re-run search to ensure new row is properly filtered
+          searchProxies();
       }
 
       function removeRow(id) {
@@ -674,7 +815,11 @@
           if (e.target.classList.contains('input-field') || e.target.classList.contains('select-field')) {
               const row = e.target.closest('.proxy-row');
               const id = row.getAttribute('data-id');
-              setTimeout(() => saveRow(id), 500); // Debounce saves
+              setTimeout(() => {
+                  saveRow(id);
+                  // Re-run search to update filtering based on new values
+                  searchProxies();
+              }, 500); // Debounce saves
           }
       });
 
@@ -683,7 +828,11 @@
           if (e.target.classList.contains('select-field')) {
               const row = e.target.closest('.proxy-row');
               const id = row.getAttribute('data-id');
-              setTimeout(() => saveRow(id), 500); // Debounce saves
+              setTimeout(() => {
+                  saveRow(id);
+                  // Re-run search to update filtering based on new values
+                  searchProxies();
+              }, 500); // Debounce saves
           }
       });
 
@@ -692,13 +841,15 @@
           const button = event.target;
           const originalText = button.textContent;
 
-          // Validate configuration before saving
+          // Get all rows in their current display order (including sorted order)
           const allRows = document.querySelectorAll('.proxy-row');
           let hasValidConfig = false;
           let validationErrors = [];
+          let configData = [];
 
           allRows.forEach((row, index) => {
               const data = getRowData(row);
+              const rowId = row.getAttribute('data-id');
               const rowNum = index + 1;
 
               if (data.cluster || data.host || data.localPort || data.remotePort) {
@@ -719,6 +870,13 @@
                   if (!data.remotePort || data.remotePort <= 0 || data.remotePort > 65535) {
                       validationErrors.push(`Row ${rowNum}: Remote port must be between 1 and 65535`);
                   }
+
+                  // Add row data with current order index
+                  configData.push({
+                      id: rowId,
+                      order: index,
+                      ...data
+                  });
               }
           });
 
@@ -739,12 +897,13 @@
           try {
               const response = await fetch('/api/config/save', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' }
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ orderedRows: configData })
               });
 
               if (response.ok) {
                   button.textContent = '✅ Saved!';
-                  showSuccessMessage('Configuration saved successfully');
+                  showSuccessMessage('Configuration saved successfully (order preserved)');
                   // Update the config location display
                   loadConfigLocation();
                   setTimeout(() => {
@@ -820,6 +979,155 @@
               }
           } catch (error) {
               console.error('Error checking status:', error);
+          }
+      }
+
+      // Search functionality
+      function searchProxies() {
+          const searchInput = document.getElementById('search-input');
+          const searchTerm = searchInput.value.toLowerCase().trim();
+          const rows = document.querySelectorAll('.proxy-row');
+          const searchClear = document.querySelector('.search-clear');
+          const searchStats = document.getElementById('search-stats');
+
+          let visibleCount = 0;
+          const totalCount = rows.length;
+
+          rows.forEach(row => {
+              if (searchTerm === '') {
+                  row.classList.remove('hidden');
+                  visibleCount++;
+              } else {
+                  const cluster = row.querySelector('[data-field="cluster"]').value.toLowerCase();
+                  const host = row.querySelector('[data-field="host"]').value.toLowerCase();
+                  const localPort = row.querySelector('[data-field="local-port"]').value;
+                  const remotePort = row.querySelector('[data-field="remote-port"]').value;
+
+                  const matches = cluster.includes(searchTerm) ||
+                                 host.includes(searchTerm) ||
+                                 localPort.includes(searchTerm) ||
+                                 remotePort.includes(searchTerm);
+
+                  if (matches) {
+                      row.classList.remove('hidden');
+                      visibleCount++;
+                  } else {
+                      row.classList.add('hidden');
+                  }
+              }
+          });
+
+          // Update search stats
+          if (searchTerm === '') {
+              searchStats.textContent = '';
+              searchClear.style.display = 'none';
+          } else {
+              searchStats.textContent = `Showing ${visibleCount} of ${totalCount} proxies`;
+              searchClear.style.display = 'block';
+          }
+      }
+
+      function clearSearch() {
+          const searchInput = document.getElementById('search-input');
+          searchInput.value = '';
+          searchProxies(); // This will show all rows and update stats
+          searchInput.focus();
+      }
+
+      // Add keyboard shortcut for search (Ctrl/Cmd + F)
+      document.addEventListener('keydown', function(e) {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+              e.preventDefault();
+              const searchInput = document.getElementById('search-input');
+              searchInput.focus();
+              searchInput.select();
+          }
+
+          // ESC to clear search when focused on search input
+          if (e.key === 'Escape' && document.activeElement.id === 'search-input') {
+              clearSearch();
+          }
+      });
+
+      // Table sorting functionality
+      let currentSort = { column: null, direction: 'asc' };
+
+      function sortTable(column) {
+          const rows = Array.from(document.querySelectorAll('.proxy-row'));
+          const container = document.getElementById('proxy-rows');
+
+          // Toggle sort direction if clicking the same column
+          if (currentSort.column === column) {
+              currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+          } else {
+              currentSort.column = column;
+              currentSort.direction = 'asc';
+          }
+
+          // Sort the rows
+          rows.sort((a, b) => {
+              let aVal, bVal;
+
+              switch (column) {
+                  case 'cluster':
+                      aVal = a.querySelector('[data-field="cluster"]').value.toLowerCase();
+                      bVal = b.querySelector('[data-field="cluster"]').value.toLowerCase();
+                      break;
+                  case 'host':
+                      aVal = a.querySelector('[data-field="host"]').value.toLowerCase();
+                      bVal = b.querySelector('[data-field="host"]').value.toLowerCase();
+                      break;
+                  case 'localPort':
+                      aVal = parseInt(a.querySelector('[data-field="local-port"]').value) || 0;
+                      bVal = parseInt(b.querySelector('[data-field="local-port"]').value) || 0;
+                      break;
+                  case 'remotePort':
+                      aVal = parseInt(a.querySelector('[data-field="remote-port"]').value) || 0;
+                      bVal = parseInt(b.querySelector('[data-field="remote-port"]').value) || 0;
+                      break;
+                  case 'status':
+                      aVal = a.querySelector('.status-connected') ? 'connected' : 'disconnected';
+                      bVal = b.querySelector('.status-connected') ? 'connected' : 'disconnected';
+                      break;
+                  default:
+                      return 0;
+              }
+
+              let comparison = 0;
+              if (aVal < bVal) {
+                  comparison = -1;
+              } else if (aVal > bVal) {
+                  comparison = 1;
+              }
+
+              return currentSort.direction === 'desc' ? comparison * -1 : comparison;
+          });
+
+          // Update sort indicators
+          updateSortIndicators(column, currentSort.direction);
+
+          // Re-append sorted rows to container
+          rows.forEach(row => container.appendChild(row));
+
+          // Re-apply search filter after sorting
+          searchProxies();
+      }
+
+      function updateSortIndicators(activeColumn, direction) {
+          // Reset all indicators
+          document.querySelectorAll('.sortable-header').forEach(header => {
+              header.classList.remove('active');
+              const indicator = header.querySelector('.sort-indicator');
+              if (indicator) {
+                  indicator.textContent = '↕';
+              }
+          });
+
+          // Set active indicator
+          const activeIndicator = document.querySelector(`[data-sort="${activeColumn}"]`);
+          if (activeIndicator) {
+              activeIndicator.parentElement.classList.add('active');
+              activeIndicator.textContent = direction === 'asc' ? '↑' : '↓';
           }
       }
     </script>

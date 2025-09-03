@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	log "aproxymate/lib/logger"
@@ -147,6 +148,115 @@ func GetKubernetesContexts(kubeconfigPath string) ([]string, error) {
 	return contexts, nil
 }
 
+// GetCurrentKubernetesContext returns the current default context from kubeconfig
+func GetCurrentKubernetesContext(kubeconfigPath string) (string, error) {
+	// If no kubeconfig path provided, try to use default
+	if kubeconfigPath == "" {
+		if home := homedir.HomeDir(); home != "" {
+			kubeconfigPath = filepath.Join(home, ".kube", "config")
+		} else {
+			return "", fmt.Errorf("unable to locate kubeconfig: home directory not found and no path provided")
+		}
+	}
+
+	// Check if kubeconfig file exists
+	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("kubeconfig file not found at path: %s", kubeconfigPath)
+	}
+
+	// Load the kubeconfig file
+	config, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load kubeconfig: %w", err)
+	}
+
+	return config.CurrentContext, nil
+}
+
+// PromptForKubernetesCluster prompts the user to select a Kubernetes cluster when none is specified
+func PromptForKubernetesCluster() (string, error) {
+	log.Debug("No Kubernetes cluster specified, looking up available clusters")
+
+	contexts, err := GetKubernetesContexts("")
+	if err != nil {
+		return "", fmt.Errorf("failed to get available Kubernetes contexts: %w", err)
+	}
+
+	if len(contexts) == 0 {
+		return "", fmt.Errorf("no Kubernetes contexts found in kubeconfig. Please ensure kubectl is configured with at least one cluster")
+	}
+
+	// Get current context as a default suggestion
+	currentContext, err := GetCurrentKubernetesContext("")
+	if err != nil {
+		log.Debug("Could not determine current context", "error", err)
+		currentContext = ""
+	}
+
+	fmt.Println("\n🔍 No Kubernetes cluster specified in configuration.")
+	fmt.Printf("Found %d available cluster(s) in your kubeconfig:\n\n", len(contexts))
+
+	// Display available contexts with numbering
+	for i, context := range contexts {
+		prefix := fmt.Sprintf("%d.", i+1)
+		if context == currentContext {
+			fmt.Printf("  %s %s (current)\n", prefix, context)
+		} else {
+			fmt.Printf("  %s %s\n", prefix, context)
+		}
+	}
+
+	// If there's only one context, use it automatically
+	if len(contexts) == 1 {
+		selectedContext := contexts[0]
+		fmt.Printf("\nAutomatically selecting the only available cluster: %s\n", selectedContext)
+		log.Debug("Automatically selected single available cluster", "cluster", selectedContext)
+		return selectedContext, nil
+	}
+
+	// If there's a current context, suggest it as default
+	if currentContext != "" {
+		fmt.Printf("\nPress Enter to use the current context (%s), or enter a cluster name/number: ", currentContext)
+	} else {
+		fmt.Print("\nEnter the cluster name or number to use: ")
+	}
+
+	// Read user input
+	var input string
+	fmt.Scanln(&input)
+
+	// If empty input and we have a current context, use it
+	if input == "" && currentContext != "" {
+		log.Debug("Using current context as default", "cluster", currentContext)
+		return currentContext, nil
+	}
+
+	// If empty input and no current context, prompt again
+	if input == "" {
+		return "", fmt.Errorf("no cluster selected. Please specify a cluster name or number")
+	}
+
+	// Check if input is a number
+	if num, err := strconv.Atoi(input); err == nil {
+		if num < 1 || num > len(contexts) {
+			return "", fmt.Errorf("invalid selection: %d. Please choose a number between 1 and %d", num, len(contexts))
+		}
+		selectedContext := contexts[num-1]
+		log.Debug("Selected cluster by number", "number", num, "cluster", selectedContext)
+		return selectedContext, nil
+	}
+
+	// Check if input matches a context name
+	for _, context := range contexts {
+		if context == input {
+			log.Debug("Selected cluster by name", "cluster", context)
+			return context, nil
+		}
+	}
+
+	return "", fmt.Errorf("cluster '%s' not found. Available clusters: %v", input, contexts)
+}
+
 // CreateSocatProxyPod creates a pod running socat to proxy traffic
 func CreateSocatProxyPod(clientset *kubernetes.Clientset, config SocatProxyConfig) (*corev1.Pod, error) {
 	// Default to "default" namespace if not specified
@@ -190,11 +300,11 @@ func CreateSocatProxyPod(clientset *kubernetes.Clientset, config SocatProxyConfi
 			Name:      podName,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app":                    "aproxymate",
-				"component":              "socat-proxy", 
-				"created-by":             "aproxymate",
-				"user":                   currentUser,
-				"aproxymate.managed":     "true",
+				"app":                "aproxymate",
+				"component":          "socat-proxy",
+				"created-by":         "aproxymate",
+				"user":               currentUser,
+				"aproxymate.managed": "true",
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -308,7 +418,7 @@ func CleanupOrphanedAproxymatePodsForUser(clientset *kubernetes.Clientset, names
 
 	// Only log if there are orphaned pods to clean up
 	if len(pods.Items) > 0 {
-		log.Info("Found orphaned aproxymate pods for cleanup", "user", currentUser, "count", len(pods.Items))
+		log.Debug("Found orphaned aproxymate pods for cleanup", "user", currentUser, "count", len(pods.Items))
 	}
 
 	// Delete each pod
@@ -347,7 +457,7 @@ func CleanupAllOrphanedAproxymatePodsInNamespace(clientset *kubernetes.Clientset
 
 	// Only log if there are orphaned pods to clean up
 	if len(pods.Items) > 0 {
-		log.Info("Found orphaned aproxymate pods for cleanup", "namespace", namespace, "count", len(pods.Items))
+		log.Debug("Found orphaned aproxymate pods for cleanup", "namespace", namespace, "count", len(pods.Items))
 	}
 
 	// Delete each pod
