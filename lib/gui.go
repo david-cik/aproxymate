@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"os/user"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,33 +93,49 @@ func (g *GUI) LoadConfigFromViper() (int, error) {
 
 	// Log configuration validation information
 	if configFileUsed != "" {
-		log.Debug("GUI loading configuration from file", "file", configFileUsed, "num_configs", len(config.ProxyConfigs))
+		opCtx, _ := log.StartOperation(context.Background(), "gui", "load_config")
+		defer opCtx.Complete("load_config", nil)
+
+		opCtx.Debug("GUI loading configuration from file", "file", configFileUsed, "num_configs", len(config.ProxyConfigs))
+		log.LogConfigLoad(configFileUsed, len(config.ProxyConfigs))
 
 		// Simple validation - check for missing required fields
+		validationErrors := 0
 		for i, proxy := range config.ProxyConfigs {
 			if proxy.Name == "" {
-				log.Warn("Configuration validation warning", "issue", "missing name", "config_index", i+1)
+				opCtx.Warn("Configuration validation warning", "issue", "missing name", "config_index", i+1)
+				validationErrors++
 			}
 			if proxy.KubernetesCluster == "" {
-				log.Warn("Configuration validation warning", "issue", "missing kubernetes_cluster", "config_index", i+1, "name", proxy.Name)
+				opCtx.Warn("Configuration validation warning", "issue", "missing kubernetes_cluster", "config_index", i+1, "name", proxy.Name)
+				validationErrors++
 			}
 			if proxy.RemoteHost == "" {
-				log.Warn("Configuration validation warning", "issue", "missing remote_host", "config_index", i+1, "name", proxy.Name)
+				opCtx.Warn("Configuration validation warning", "issue", "missing remote_host", "config_index", i+1, "name", proxy.Name)
+				validationErrors++
 			}
 			if proxy.LocalPort == 0 {
-				log.Warn("Configuration validation warning", "issue", "invalid local_port", "config_index", i+1, "name", proxy.Name, "port", proxy.LocalPort)
+				opCtx.Warn("Configuration validation warning", "issue", "invalid local_port", "config_index", i+1, "name", proxy.Name, "port", proxy.LocalPort)
+				validationErrors++
 			}
 			if proxy.RemotePort == 0 {
-				log.Warn("Configuration validation warning", "issue", "invalid remote_port", "config_index", i+1, "name", proxy.Name, "port", proxy.RemotePort)
+				opCtx.Warn("Configuration validation warning", "issue", "invalid remote_port", "config_index", i+1, "name", proxy.Name, "port", proxy.RemotePort)
+				validationErrors++
 			}
+		}
+
+		if validationErrors > 0 {
+			opCtx.Warn("Configuration validation completed with warnings", "total_errors", validationErrors)
+		} else {
+			opCtx.Debug("Configuration validation completed successfully")
 		}
 
 		// Check for missing clusters and prompt if needed
 		if HasConfigsWithMissingClusters(config.ProxyConfigs) {
 			missingConfigs := FindConfigsWithMissingClusters(config.ProxyConfigs)
-			log.Debug("Found configurations with missing Kubernetes clusters", "count", len(missingConfigs))
+			opCtx.Debug("Found configurations with missing Kubernetes clusters", "count", len(missingConfigs))
 
-			selectedCluster, err := PromptForKubernetesCluster()
+			selectedCluster, err := SelectKubernetesClusterTUI("")
 			if err != nil {
 				return 0, fmt.Errorf("failed to select Kubernetes cluster: %w", err)
 			}
@@ -132,11 +148,11 @@ func (g *GUI) LoadConfigFromViper() (int, error) {
 			if configFileUsed != "" {
 				viper.Set("proxy_configs", config.ProxyConfigs)
 				if err := viper.WriteConfig(); err != nil {
-					log.Warn("Failed to save updated configuration with cluster information", "error", err)
-					fmt.Printf("Warning: Could not save updated configuration: %v\n", err)
+					outputCtx := NewSimpleOutputContext()
+					outputCtx.Warn("Failed to save updated configuration with cluster information", "Warning: Could not save updated configuration: %v\n", err)
 				} else {
-					log.Debug("Saved updated configuration with cluster information", "file", configFileUsed)
-					fmt.Printf("✅ Updated configuration saved with cluster '%s'\n", selectedCluster)
+					outputCtx := NewSimpleOutputContext()
+					outputCtx.Success("Saved updated configuration with cluster information", "✅ Updated configuration saved with cluster '%s'\n", selectedCluster)
 				}
 			}
 		}
@@ -234,8 +250,8 @@ func (g *GUI) Start(port int, serverReady chan<- bool) error {
 		Handler: mux,
 	}
 
-	log.Debug("GUI server starting", "port", port, "url", fmt.Sprintf("http://localhost:%d", port))
-	fmt.Printf("Aproxymate GUI starting on http://localhost:%d\n", port)
+	outputCtx := NewSimpleOutputContext()
+	outputCtx.Info("GUI server starting", "Aproxymate GUI starting on http://localhost:%d\n", port)
 
 	// Start the server in a goroutine
 	go func() {
@@ -809,18 +825,14 @@ func (g *GUI) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 
 	if !g.configFileLoaded {
 		// No config file was initially loaded, use default location
-		configFile := "./aproxymate.yaml"
+		configFile := GetLocalConfigPath()
 		// Convert to absolute path for display and consistency
-		absConfigFile, err := filepath.Abs(configFile)
-		if err != nil {
-			log.Warn("Error getting absolute path for config file", "file", configFile, "error", err)
-			absConfigFile = configFile // fallback to relative path
-		}
+		absConfigFile := GetAbsolutePathForDisplay(configFile)
 		log.Info("No config file was loaded on startup, saving to default location", "file", absConfigFile)
 		savedConfigFile = absConfigFile
 
 		// Force write using WriteConfigAs to ensure we get the correct filename
-		err = viper.WriteConfigAs(configFile)
+		err := viper.WriteConfigAs(configFile)
 		if err != nil {
 			log.Error("Error saving configuration", "file", configFile, "error", err)
 			http.Error(w, fmt.Sprintf("Failed to save configuration: %v", err), http.StatusInternalServerError)
@@ -841,13 +853,7 @@ func (g *GUI) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Convert to absolute path for display consistency
-		absConfigFile, err := filepath.Abs(configFile)
-		if err != nil {
-			log.Warn("Error getting absolute path for existing config file", "file", configFile, "error", err)
-			savedConfigFile = configFile // fallback to original path
-		} else {
-			savedConfigFile = absConfigFile
-		}
+		savedConfigFile = GetAbsolutePathForDisplay(configFile)
 	}
 
 	log.Info("Configuration saved successfully", "proxy_configs", len(configs), "file", savedConfigFile, "order_preserved", len(orderedRowsRequest.OrderedRows) > 0)
@@ -868,7 +874,7 @@ func (g *GUI) handleConfigLocation(w http.ResponseWriter, r *http.Request) {
 	defer g.mu.RUnlock()
 
 	location := g.GetConfigSaveLocation()
-	nextSaveLocation := "./aproxymate.yaml"
+	nextSaveLocation := GetLocalConfigPath()
 
 	if g.configFileLoaded {
 		configFile := viper.ConfigFileUsed()
@@ -878,11 +884,7 @@ func (g *GUI) handleConfigLocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert nextSaveLocation to absolute path for consistent display
-	absNextSaveLocation, err := filepath.Abs(nextSaveLocation)
-	if err != nil {
-		log.Warn("Error getting absolute path for next save location", "path", nextSaveLocation, "error", err)
-		absNextSaveLocation = nextSaveLocation // fallback to relative path
-	}
+	absNextSaveLocation := GetAbsolutePathForDisplay(nextSaveLocation)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -987,13 +989,7 @@ func (g *GUI) GetConfigSaveLocation() string {
 	}
 
 	// Convert to absolute path for consistent display
-	absPath, err := filepath.Abs(configFile)
-	if err != nil {
-		log.Warn("Error getting absolute path for config file", "config_file", configFile, "error", err)
-		return configFile // fallback to original path
-	}
-
-	return absPath
+	return GetAbsolutePathForDisplay(configFile)
 }
 
 // getSafeUsername returns a Kubernetes-safe username

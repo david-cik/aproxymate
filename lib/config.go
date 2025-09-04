@@ -2,8 +2,11 @@ package lib
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 
+	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -188,4 +191,47 @@ func HasConfigsWithMissingClusters(configs []ProxyConfig) bool {
 		}
 	}
 	return false
+}
+
+// GetDefaultConfigPaths returns standard config file locations
+func GetDefaultConfigPaths() []string {
+	return GetConfigSearchPaths()
+}
+
+// GetAbsolutePathForDisplay converts path to absolute for consistent display
+func GetAbsolutePathForDisplay(path string) string {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return path // fallback to original path
+	}
+	return absPath
+}
+
+// FindAndLoadConfigFile searches standard locations and loads config
+func FindAndLoadConfigFile() (string, error) {
+	// If viper already has a config file, use it
+	if configFile := viper.ConfigFileUsed(); configFile != "" {
+		return configFile, nil
+	}
+
+	// Search in standard locations
+	configPaths := GetDefaultConfigPaths()
+
+	for _, path := range configPaths {
+		if _, err := os.Stat(path); err == nil {
+			// Found a config file, set it in viper
+			viper.SetConfigFile(path)
+			if err := viper.ReadInConfig(); err == nil {
+				return path, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no configuration file found in standard locations")
+}
+
+// EnsureConfigLoaded ensures a config file is loaded in viper
+func EnsureConfigLoaded() error {
+	_, err := FindAndLoadConfigFile()
+	return err
 }

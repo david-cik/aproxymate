@@ -52,22 +52,24 @@ specified with --output) with sample proxy configurations that you can customize
 		output, _ := cmd.Flags().GetString("output")
 		force, _ := cmd.Flags().GetBool("force")
 
-		log.Debug("Initializing configuration file", "output", output, "force", force)
+		opCtx, _ := log.StartOperation(context.Background(), "config", "init")
+		defer opCtx.Complete("config_init", nil)
+
+		opCtx.Debug("Initializing configuration file", "output", output, "force", force)
 
 		if output == "" {
-			home, err := os.UserHomeDir()
+			var err error
+			output, err = lib.GetDefaultConfigPath()
 			if err != nil {
-				log.Error("Failed to get home directory", "error", err)
-				fmt.Printf("Error getting home directory: %v\n", err)
-				os.Exit(1)
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Error getting default config path: %v\n", err)
 			}
-			output = filepath.Join(home, "aproxymate.yaml")
 		}
 
 		// Check if file exists and force flag is not set
 		if _, err := os.Stat(output); err == nil && !force {
-			log.Warn("Configuration file already exists, not overwriting", "file", output)
-			fmt.Printf("Config file already exists at %s. Use --force to overwrite.\n", output)
+			outputCtx := lib.NewOutputContext(opCtx)
+			outputCtx.Warn("Configuration file already exists, not overwriting", "Config file already exists at %s. Use --force to overwrite.\n", output)
 			os.Exit(1)
 		}
 
@@ -101,18 +103,17 @@ specified with --output) with sample proxy configurations that you can customize
 		// Write to file
 		data, err := yaml.Marshal(&sampleConfig)
 		if err != nil {
-			log.Error("Failed to marshal configuration", "error", err)
-			fmt.Printf("Error marshaling config: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Error marshaling config: %v\n", err)
 		}
 
 		if err := os.WriteFile(output, data, 0644); err != nil {
-			log.Error("Failed to write configuration file", "file", output, "error", err)
-			fmt.Printf("Error writing config file: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Error writing config file: %v\n", err)
 		}
 
-		log.Debug("Sample configuration file created successfully", "file", output)
+		opCtx.Debug("Sample configuration file created successfully", "file", output)
+		log.LogFileOperation("write", output, int64(len(data)), nil)
 		fmt.Printf("Sample configuration file created at: %s\n", output)
 		fmt.Println("\nYou can now customize this file and use it with:")
 		fmt.Printf("  aproxymate gui --config %s\n", output)
@@ -128,46 +129,31 @@ var showCmd = &cobra.Command{
 - Whether a configuration file was found and loaded
 - Basic statistics about the configuration`,
 	Run: func(cmd *cobra.Command, args []string) {
+		opCtx, _ := log.StartOperation(context.Background(), "config", "show")
+		defer opCtx.Complete("config_show", nil)
+
 		// Ensure viper is properly initialized and attempts to read config
 		// This is needed because config show might be run without other commands that trigger config loading
 		if viper.ConfigFileUsed() == "" {
-			// Try to find and read config file manually
-			home, err := os.UserHomeDir()
-			if err == nil {
-				// Check common config file locations
-				configPaths := []string{
-					filepath.Join(home, "aproxymate.yaml"),
-					filepath.Join(home, ".aproxymate.yaml"),
-					"./aproxymate.yaml",
-					"./.aproxymate.yaml",
-				}
-
-				for _, path := range configPaths {
-					if _, err := os.Stat(path); err == nil {
-						// Found a config file, set it in viper
-						viper.SetConfigFile(path)
-						if err := viper.ReadInConfig(); err == nil {
-							break
-						}
-					}
-				}
+			opCtx.Debug("No config file loaded in viper, searching for config files")
+			// Try to find and read config file using shared utility
+			if _, err := lib.FindAndLoadConfigFile(); err != nil {
+				opCtx.Error("Failed to find config file", err)
 			}
 		}
 
 		configFile := viper.ConfigFileUsed()
 
 		if configFile == "" {
+			opCtx.Debug("No configuration file found")
 			fmt.Println("No configuration file is currently loaded.")
 			fmt.Println("\nConfiguration search paths:")
 
-			// Show where it would look for config files
-			home, err := os.UserHomeDir()
-			if err == nil {
-				fmt.Printf("  %s/aproxymate.yaml\n", home)
-				fmt.Printf("  %s/.aproxymate.yaml\n", home)
+			// Show where it would look for config files using shared function
+			searchPaths := lib.GetDefaultConfigPaths()
+			for _, path := range searchPaths {
+				fmt.Printf("  %s\n", path)
 			}
-			fmt.Println("  ./aproxymate.yaml")
-			fmt.Println("  ./.aproxymate.yaml")
 
 			fmt.Println("\nTo create a sample configuration file, run:")
 			fmt.Println("  aproxymate config init")
@@ -175,44 +161,66 @@ var showCmd = &cobra.Command{
 		}
 
 		// Convert to absolute path for display
-		absPath, err := filepath.Abs(configFile)
-		if err != nil {
-			absPath = configFile
-		}
+		absPath := lib.GetAbsolutePathForDisplay(configFile)
 
-		fmt.Printf("Configuration file: %s\n", absPath)
+		outputCtx := lib.NewOutputContext(opCtx)
+		outputCtx.Info("Displaying configuration status", "Configuration file: %s\n", absPath)
 
 		// Check if file exists and is readable
 		if _, err := os.Stat(configFile); err != nil {
-			log.Error("Configuration file not accessible", "file", configFile, "error", err)
-			fmt.Printf("Status: ERROR - File not accessible (%v)\n", err)
+			outputCtx.Error("Configuration file not accessible", err, "Status: ERROR - File not accessible\n")
 			return
 		}
 
 		// First validate the raw YAML
 		yamlData, err := os.ReadFile(configFile)
 		if err != nil {
-			log.Error("Failed to read configuration file", "file", configFile, "error", err)
-			fmt.Printf("Status: ERROR - Failed to read file (%v)\n", err)
+			outputCtx := lib.NewOutputContext(opCtx)
+			outputCtx.Error("Failed to read configuration file", err, "Status: ERROR - Failed to read file\n")
+
+			// Prompt user to select config file location
+			location, cancelled, promptErr := lib.PromptConfigLocationTUI()
+			if promptErr != nil {
+				outputCtx.Error("Failed to prompt for config location", promptErr, "Error occurred\n")
+				return
+			}
+
+			if cancelled {
+				fmt.Println("Configuration file location selection cancelled.")
+				return
+			}
+
+			// Update configFile to the selected location and continue with the show command
+			configFile = location
+			absPath, _ := filepath.Abs(configFile)
+			fmt.Printf("Selected configuration location: %s\n", absPath)
+			fmt.Println("Note: Configuration file will be used when available at this location.")
+
+			// Since no file exists at the selected location, inform user and exit
+			fmt.Printf("No configuration file found at: %s\n", absPath)
+			fmt.Println("\nTo create a configuration file at this location, run:")
+			fmt.Printf("  aproxymate config init --output %s\n", configFile)
 			return
 		}
 
+		log.LogFileOperation("read", configFile, int64(len(yamlData)), nil)
+
 		// Validate YAML structure
 		if err := lib.ValidateConfigYAML(yamlData); err != nil {
-			log.Error("Configuration validation failed", "file", configFile, "error", err)
-			fmt.Printf("Status: ERROR - Configuration validation failed (%v)\n", err)
+			outputCtx.Error("Configuration validation failed", err, "Status: ERROR - Configuration validation failed\n")
+			log.LogConfigValidation(configFile, err)
 			return
 		}
 
 		// Try to load and parse the config
 		var config lib.AppConfig
 		if err := viper.Unmarshal(&config); err != nil {
-			log.Error("Failed to parse configuration", "file", configFile, "error", err)
-			fmt.Printf("Status: ERROR - Failed to parse configuration (%v)\n", err)
+			outputCtx.Error("Failed to parse configuration", err, "Status: ERROR - Failed to parse configuration\n")
 			return
 		}
 
-		log.Debug("Configuration validation successful", "file", configFile, "proxy_configs", len(config.ProxyConfigs))
+		log.LogConfigValidation(configFile, nil)
+		opCtx.Debug("Configuration validation successful", "file", configFile, "proxy_configs", len(config.ProxyConfigs))
 
 		fmt.Printf("Status: OK - Configuration loaded and validated successfully\n")
 
@@ -254,23 +262,14 @@ Example:
 		// Ensure viper is properly initialized and attempts to read config
 		if viper.ConfigFileUsed() == "" {
 			// Try to find and read config file manually
-			home, err := os.UserHomeDir()
-			if err == nil {
-				// Check common config file locations
-				configPaths := []string{
-					filepath.Join(home, "aproxymate.yaml"),
-					filepath.Join(home, ".aproxymate.yaml"),
-					"./aproxymate.yaml",
-					"./.aproxymate.yaml",
-				}
+			configPaths := lib.GetConfigSearchPaths()
 
-				for _, path := range configPaths {
-					if _, err := os.Stat(path); err == nil {
-						// Found a config file, set it in viper
-						viper.SetConfigFile(path)
-						if err := viper.ReadInConfig(); err == nil {
-							break
-						}
+			for _, path := range configPaths {
+				if _, err := os.Stat(path); err == nil {
+					// Found a config file, set it in viper
+					viper.SetConfigFile(path)
+					if err := viper.ReadInConfig(); err == nil {
+						break
 					}
 				}
 			}
@@ -286,18 +285,15 @@ Example:
 		}
 
 		// Convert to absolute path for display
-		absPath, err := filepath.Abs(configFile)
-		if err != nil {
-			absPath = configFile
-		}
+		absPath := lib.GetAbsolutePathForDisplay(configFile)
 
 		fmt.Printf("Checking configuration file: %s\n", absPath)
 
 		// Try to load and parse the config
 		var config lib.AppConfig
 		if err := viper.Unmarshal(&config); err != nil {
-			log.Error("Failed to parse configuration for fixing", "file", configFile, "error", err)
-			fmt.Printf("Error parsing configuration file: %v\n", err)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserError("Error parsing configuration file: %v\n", err)
 			return
 		}
 
@@ -322,11 +318,10 @@ Example:
 		}
 
 		// Prompt for cluster selection
-		selectedCluster, err := lib.PromptForKubernetesCluster()
+		selectedCluster, err := lib.SelectKubernetesClusterTUI("")
 		if err != nil {
-			log.Error("Failed to select Kubernetes cluster", "error", err)
-			fmt.Printf("Error selecting cluster: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Error selecting cluster: %v\n", err)
 		}
 
 		// Update configurations with the selected cluster
@@ -339,15 +334,13 @@ Example:
 
 		data, err := yaml.Marshal(&finalConfig)
 		if err != nil {
-			log.Error("Failed to marshal updated configuration", "error", err)
-			fmt.Printf("Error marshaling config: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Error marshaling config: %v\n", err)
 		}
 
 		if err := os.WriteFile(configFile, data, 0644); err != nil {
-			log.Error("Failed to write updated configuration file", "file", configFile, "error", err)
-			fmt.Printf("Error writing config file: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Error writing config file: %v\n", err)
 		}
 
 		log.Debug("Configuration fixed successfully",
@@ -375,27 +368,8 @@ This command shows detailed information about each proxy configuration including
 	Run: func(cmd *cobra.Command, args []string) {
 		// Ensure viper is properly initialized and attempts to read config
 		if viper.ConfigFileUsed() == "" {
-			// Try to find and read config file manually
-			home, err := os.UserHomeDir()
-			if err == nil {
-				// Check common config file locations
-				configPaths := []string{
-					filepath.Join(home, "aproxymate.yaml"),
-					filepath.Join(home, ".aproxymate.yaml"),
-					"./aproxymate.yaml",
-					"./.aproxymate.yaml",
-				}
-
-				for _, path := range configPaths {
-					if _, err := os.Stat(path); err == nil {
-						// Found a config file, set it in viper
-						viper.SetConfigFile(path)
-						if err := viper.ReadInConfig(); err == nil {
-							break
-						}
-					}
-				}
-			}
+			// Try to find and read config file using shared utility
+			lib.EnsureConfigLoaded()
 		}
 
 		configFile := viper.ConfigFileUsed()
@@ -410,8 +384,8 @@ This command shows detailed information about each proxy configuration including
 		// Try to load and parse the config
 		var config lib.AppConfig
 		if err := viper.Unmarshal(&config); err != nil {
-			log.Error("Failed to parse configuration for listing", "file", configFile, "error", err)
-			fmt.Printf("Error parsing configuration file: %v\n", err)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserError("Error parsing configuration file: %v\n", err)
 			return
 		}
 
@@ -455,20 +429,30 @@ This command will:
 - Assign unique local ports automatically
 - Merge the new configurations with your existing ones
 
-The command requires:
-- AWS profile (specify via --profile flag or AWS_PROFILE environment variable)
-- AWS region (specify via --region flag or AWS_REGION environment variable)
-- AWS credentials configured for the specified profile via:
-  - AWS CLI (aws configure --profile <profile-name>)
-  - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-  - IAM roles (if running on EC2)
-  - AWS credentials file (~/.aws/credentials)
+Configuration options:
+- AWS profile and region can be specified via flags or environment variables
+- If not provided or invalid, an interactive TUI will prompt for selection
+- Profiles are read from ~/.aws/config and validated automatically
+- Only standard US regions (us-east-1, us-east-2, us-west-1, us-west-2) are supported
 
 Examples:
+  # Interactive mode - will prompt for cluster, profile and region selection
+  aproxymate config rds-import
+  
+  # Specify cluster, profile and region explicitly
   aproxymate config rds-import --cluster eks-prod --region us-west-2 --profile production
-  aproxymate config rds-import --cluster eks-prod --region us-east-1 --profile my-profile
-  aproxymate config rds-import --cluster eks-prod --region eu-west-1 --starting-port 4000 --profile dev
-  aproxymate config rds-import --cluster eks-prod --region us-west-2 --engines mysql,postgres --profile prod
+  aproxymate config rds-import --cluster eks-prod --region us-east-1 --profile my-profile --engines mysql,postgres
+  aproxymate config rds-import --cluster eks-prod --starting-port 4000 --profile dev
+  
+  # Filter by specific RDS instance/cluster names
+  aproxymate config rds-import --cluster eks-prod --names prod-db,staging-cluster
+  aproxymate config rds-import --cluster eks-prod --names user-service --engines postgres
+  
+  # Dry run mode - preview changes without saving
+  aproxymate config rds-import --cluster eks-prod --dry-run
+  
+  # Use global --config flag to specify output file location
+  aproxymate config rds-import --cluster eks-prod --config ./my-config.yaml
   
   # Using environment variables:
   export AWS_PROFILE=production
@@ -480,8 +464,8 @@ Examples:
 		profile, _ := cmd.Flags().GetString("profile")
 		startingPort, _ := cmd.Flags().GetInt("starting-port")
 		enginesFlag, _ := cmd.Flags().GetString("engines")
+		namesFlag, _ := cmd.Flags().GetString("names")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		output, _ := cmd.Flags().GetString("output")
 
 		// Get AWS profile from environment if not specified on command line
 		if profile == "" {
@@ -499,37 +483,126 @@ Examples:
 			"profile", profile,
 			"starting_port", startingPort,
 			"engines", enginesFlag,
+			"names", namesFlag,
 			"dry_run", dryRun)
 
-		if cluster == "" {
-			fmt.Println("Error: --cluster flag is required")
-			fmt.Println("\nThe cluster flag specifies which Kubernetes cluster the RDS endpoints should be configured for.")
-			fmt.Println("Example: aproxymate config rds-import --cluster eks-prod")
-			os.Exit(1)
+		// Validate and select AWS profile separately
+		profileValid := false
+		if profile != "" {
+			valid, err := lib.ValidateAWSProfile(profile)
+			if err != nil {
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserError("Failed to validate AWS profile '%s': %v\n", profile, err)
+			} else {
+				profileValid = valid
+			}
 		}
 
-		if profile == "" {
-			fmt.Println("Error: AWS profile is required")
-			fmt.Println("\nPlease specify an AWS profile using one of these methods:")
-			fmt.Println("  - Command line flag: --profile my-profile")
-			fmt.Println("  - Environment variable: export AWS_PROFILE=my-profile")
-			fmt.Println("\nThis ensures you're using the correct AWS account and prevents accidental use of default credentials.")
-			os.Exit(1)
+		// If profile is missing or invalid, prompt for selection
+		if profile == "" || !profileValid {
+			if profile != "" && !profileValid {
+				fmt.Printf("AWS profile '%s' not found or invalid.\n", profile)
+			} else {
+				fmt.Println("AWS profile not specified.")
+			}
+
+			fmt.Println("Launching AWS profile selection...")
+			selectedProfile, err := lib.SelectAWSProfileTUI()
+			if err != nil {
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Failed to select AWS profile: %v\n", err)
+			}
+			profile = selectedProfile
+			log.Debug("Selected AWS profile via TUI", "profile", profile)
+			fmt.Printf("Selected AWS profile: %s\n", profile)
 		}
 
-		if region == "" {
-			fmt.Println("Error: AWS region is required")
-			fmt.Println("\nPlease specify an AWS region using one of these methods:")
-			fmt.Println("  - Command line flag: --region us-west-2")
-			fmt.Println("  - Environment variable: export AWS_REGION=us-west-2")
-			fmt.Println("\nThis ensures you're targeting the correct AWS region.")
-			os.Exit(1)
+		// Validate and select AWS region separately
+		regionValid := false
+		if region != "" {
+			regionValid = lib.ValidateAWSRegion(region)
+		}
+
+		// If region is missing or invalid, prompt for selection
+		if region == "" || !regionValid {
+			if region != "" && !regionValid {
+				fmt.Printf("AWS region '%s' not supported (only US regions are supported).\n", region)
+			} else {
+				fmt.Println("AWS region not specified.")
+			}
+
+			fmt.Println("Launching AWS region selection...")
+			selectedRegion, err := lib.SelectAWSRegionTUI()
+			if err != nil {
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Failed to select AWS region: %v\n", err)
+			}
+			region = selectedRegion
+			log.Debug("Selected AWS region via TUI", "region", region)
+			fmt.Printf("Selected AWS region: %s\n", region)
+		}
+
+		// Validate the specified cluster exists in kubeconfig (if provided)
+		clusterValid := false
+		if cluster != "" {
+			valid, err := lib.ValidateKubernetesCluster(cluster)
+			if err != nil {
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserError("Failed to validate Kubernetes cluster: %v\n", err)
+			} else {
+				clusterValid = valid
+			}
+		}
+
+		// If cluster is missing or invalid, prompt for selection
+		if cluster == "" || !clusterValid {
+			if cluster != "" && !clusterValid {
+				log.Debug("Specified cluster not found in kubeconfig, launching TUI", "cluster", cluster)
+				fmt.Printf("Cluster '%s' not found in your kubeconfig.\n", cluster)
+			} else {
+				fmt.Println("Kubernetes cluster not specified.")
+			}
+
+			fmt.Println("Launching Kubernetes cluster selection...")
+			selectedCluster, err := lib.SelectKubernetesClusterTUI(cluster)
+			if err != nil {
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Failed to select cluster: %v\n", err)
+			}
+
+			cluster = selectedCluster
+			log.Debug("Selected cluster via TUI", "cluster", cluster)
+			fmt.Printf("Selected cluster: %s\n", cluster)
 		}
 
 		// Parse engines filter
 		var engines []string
 		if enginesFlag != "" {
 			engines = strings.Split(strings.ReplaceAll(enginesFlag, " ", ""), ",")
+		}
+
+		// Handle names filter - prompt via TUI if not provided
+		var names []string
+		if namesFlag != "" {
+			names = strings.Split(strings.ReplaceAll(namesFlag, " ", ""), ",")
+		} else {
+			// Prompt user if they want to filter by names
+			wantsFilter, namesInput, cancelled, err := lib.PromptForNamesFilter()
+			if err != nil {
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Failed to get names filter: %v\n", err)
+			}
+
+			if cancelled {
+				fmt.Println("RDS import cancelled.")
+				return
+			}
+
+			if wantsFilter && namesInput != "" {
+				names = strings.Split(strings.ReplaceAll(namesInput, " ", ""), ",")
+				log.Debug("Selected names filter via TUI", "names", strings.Join(names, ","))
+				fmt.Printf("Selected names filter: %s\n", strings.Join(names, ", "))
+			}
 		}
 
 		// Create AWS config
@@ -545,8 +618,8 @@ Examples:
 		fmt.Printf("Validating AWS credentials (region: %s, profile: %s)...\n", awsConfig.Region, awsConfig.Profile)
 
 		if err := lib.ValidateAWSCredentials(ctx, awsConfig); err != nil {
-			log.Error("AWS credentials validation failed", "error", err)
-			fmt.Printf("AWS credentials validation failed: %v\n", err)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserError("AWS credentials validation failed: %v\n", err)
 			fmt.Println("\nPlease ensure:")
 			fmt.Println("  1. AWS profile is specified via --profile flag or AWS_PROFILE environment variable")
 			fmt.Println("  2. AWS region is specified via --region flag or AWS_REGION environment variable")
@@ -564,9 +637,8 @@ Examples:
 		fmt.Println("Discovering RDS endpoints...")
 		endpoints, err := lib.GetAWSRDSEndpoints(ctx, awsConfig)
 		if err != nil {
-			log.Error("Failed to fetch RDS endpoints", "error", err)
-			fmt.Printf("Failed to fetch RDS endpoints: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Failed to fetch RDS endpoints: %v\n", err)
 		}
 
 		if len(endpoints) == 0 {
@@ -590,6 +662,12 @@ Examples:
 			fmt.Printf("Filtered to %d endpoints matching engines: %s\n", len(endpoints), strings.Join(engines, ", "))
 		}
 
+		// Filter by names if specified
+		if len(names) > 0 {
+			endpoints = lib.FilterRDSEndpointsByName(endpoints, names)
+			fmt.Printf("Filtered to %d endpoints matching names: %s\n", len(endpoints), strings.Join(names, ", "))
+		}
+
 		// Filter by status (only available/running)
 		endpoints = lib.FilterRDSEndpointsByStatus(endpoints, []string{"available", "running"})
 		fmt.Printf("Filtered to %d available endpoints\n", len(endpoints))
@@ -601,20 +679,21 @@ Examples:
 
 		// Load existing configuration
 		var existingConfig lib.AppConfig
-		configFile := output
-		if configFile == "" {
+		configFile := ""
+
+		// Check if global --config flag was used
+		if cfgFile != "" {
+			configFile = cfgFile
+		} else if viper.ConfigFileUsed() != "" {
 			// Try to find existing config file
-			if viper.ConfigFileUsed() != "" {
-				configFile = viper.ConfigFileUsed()
-			} else {
-				// Use default location
-				home, err := os.UserHomeDir()
-				if err != nil {
-					log.Error("Failed to get home directory", "error", err)
-					fmt.Printf("Error getting home directory: %v\n", err)
-					os.Exit(1)
-				}
-				configFile = filepath.Join(home, "aproxymate.yaml")
+			configFile = viper.ConfigFileUsed()
+		} else {
+			// Use default location
+			var err error
+			configFile, err = lib.GetDefaultConfigPath()
+			if err != nil {
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Error getting default config path: %v\n", err)
 			}
 		}
 
@@ -622,15 +701,13 @@ Examples:
 		if _, err := os.Stat(configFile); err == nil {
 			yamlData, err := os.ReadFile(configFile)
 			if err != nil {
-				log.Error("Failed to read existing configuration", "file", configFile, "error", err)
-				fmt.Printf("Error reading existing config file: %v\n", err)
-				os.Exit(1)
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Error reading existing config file: %v\n", err)
 			}
 
 			if err := yaml.Unmarshal(yamlData, &existingConfig); err != nil {
-				log.Error("Failed to parse existing configuration", "file", configFile, "error", err)
-				fmt.Printf("Error parsing existing config file: %v\n", err)
-				os.Exit(1)
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserErrorAndExit("Error parsing existing config file: %v\n", err)
 			}
 
 			fmt.Printf("Loaded existing configuration with %d proxy configs\n", len(existingConfig.ProxyConfigs))
@@ -654,11 +731,6 @@ Examples:
 		if dryRun {
 			fmt.Println("DRY RUN MODE - Changes will not be saved")
 		}
-
-		fmt.Printf("Configuration summary:\n")
-		fmt.Printf("  Existing configurations: %d\n", len(existingConfig.ProxyConfigs))
-		fmt.Printf("  New configurations added: %d\n", newConfigsAdded)
-		fmt.Printf("  Total configurations: %d\n", len(mergedConfigs))
 
 		if newConfigsAdded > 0 {
 			fmt.Println("\nNew configurations that will be added:")
@@ -693,6 +765,36 @@ Examples:
 			return
 		}
 
+		// Get only the new configs for confirmation
+		var newConfigsOnly []lib.ProxyConfig
+		for _, config := range mergedConfigs {
+			// Check if this is a new config
+			isNew := true
+			for _, existing := range existingConfig.ProxyConfigs {
+				if existing.RemoteHost == config.RemoteHost && existing.RemotePort == config.RemotePort {
+					isNew = false
+					break
+				}
+			}
+			if isNew {
+				newConfigsOnly = append(newConfigsOnly, config)
+			}
+		}
+
+		// Show confirmation TUI for the import
+		confirmed, cancelled, err := lib.PromptRDSImportConfirmation(newConfigsOnly, len(existingConfig.ProxyConfigs))
+		if err != nil {
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Failed to get import confirmation: %v\n", err)
+		}
+
+		if cancelled || !confirmed {
+			fmt.Println("RDS import cancelled by user.")
+			return
+		}
+
+		fmt.Println("Proceeding with RDS import...")
+
 		// Save the merged configuration
 		finalConfig := lib.AppConfig{
 			ProxyConfigs: mergedConfigs,
@@ -700,22 +802,17 @@ Examples:
 
 		data, err := yaml.Marshal(&finalConfig)
 		if err != nil {
-			log.Error("Failed to marshal configuration", "error", err)
-			fmt.Printf("Error marshaling config: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Error marshaling config: %v\n", err)
 		}
 
 		if err := os.WriteFile(configFile, data, 0644); err != nil {
-			log.Error("Failed to write configuration file", "file", configFile, "error", err)
-			fmt.Printf("Error writing config file: %v\n", err)
-			os.Exit(1)
+			outputCtx := lib.NewSimpleOutputContext()
+			outputCtx.UserErrorAndExit("Error writing config file: %v\n", err)
 		}
 
 		// Convert to absolute path for display
-		absPath, err := filepath.Abs(configFile)
-		if err != nil {
-			absPath = configFile
-		}
+		absPath := lib.GetAbsolutePathForDisplay(configFile)
 
 		log.Debug("AWS RDS import completed successfully",
 			"file", absPath,
@@ -742,14 +839,11 @@ func init() {
 	initCmd.Flags().BoolP("force", "f", false, "Force overwrite existing config file")
 
 	// Add flags for the config rds-import command
-	rdsImportCmd.Flags().StringP("cluster", "c", "", "Kubernetes cluster name to associate with RDS endpoints (required)")
-	rdsImportCmd.Flags().StringP("region", "r", "", "AWS region (required - can also be set via AWS_REGION environment variable)")
-	rdsImportCmd.Flags().StringP("profile", "p", "", "AWS profile to use (required - can also be set via AWS_PROFILE environment variable)")
+	rdsImportCmd.Flags().StringP("cluster", "c", "", "Kubernetes cluster name to associate with RDS endpoints (optional - will prompt via TUI if not provided)")
+	rdsImportCmd.Flags().StringP("region", "r", "", "AWS region (optional - will prompt via TUI if not provided)")
+	rdsImportCmd.Flags().StringP("profile", "p", "", "AWS profile to use (optional - will prompt via TUI if not provided)")
 	rdsImportCmd.Flags().IntP("starting-port", "s", 0, "Starting local port number (defaults to next available port)")
 	rdsImportCmd.Flags().StringP("engines", "e", "", "Comma-separated list of database engines to include (e.g., mysql,postgres)")
+	rdsImportCmd.Flags().StringP("names", "n", "", "Comma-separated list of RDS instance/cluster names to filter by (supports partial matching)")
 	rdsImportCmd.Flags().Bool("dry-run", false, "Show what would be imported without making changes")
-	rdsImportCmd.Flags().StringP("output", "o", "", "Output path for the config file (defaults to existing config or ~/aproxymate.yaml)")
-
-	// Mark cluster as required for rds-import command
-	rdsImportCmd.MarkFlagRequired("cluster")
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,29 +55,47 @@ to generate a sample configuration file, then start the GUI with:
 The GUI will be available at http://localhost:8080 by default and will automatically open in your browser.
 Use --no-open flag to disable automatic browser opening.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		opCtx, _ := log.StartOperation(context.Background(), "gui", "start")
+		defer func() {
+			if r := recover(); r != nil {
+				opCtx.Complete("gui_start", fmt.Errorf("panic: %v", r))
+				panic(r)
+			}
+		}()
+
 		port, _ := cmd.Flags().GetInt("port")
 		noBrowser, _ := cmd.Flags().GetBool("no-open")
 
-		log.Debug("Starting GUI command", "port", port, "auto_launch", !noBrowser)
+		opCtx.Debug("Starting GUI command", "port", port, "auto_launch", !noBrowser)
+		log.LogUserAction("start_gui", "gui_server", map[string]any{
+			"port":         port,
+			"auto_browser": !noBrowser,
+		})
 
 		gui := lib.NewGUI()
 
 		// Load configurations from Viper if available
+		timer := log.StartTimer("config_load")
 		numConfigs, err := gui.LoadConfigFromViper()
+		timer.Stop()
+
 		if err != nil {
 			// Check if this is a missing cluster error
 			if numConfigs > 0 {
-				log.Error("Failed to load configuration due to missing clusters", "error", err)
-				fmt.Printf("❌ Failed to load configuration: %v\n", err)
+				outputCtx := lib.NewSimpleOutputContext()
+				outputCtx.UserError("❌ Failed to load configuration: %v\n", err)
 				fmt.Println("\nYour configuration has proxy entries but some are missing Kubernetes cluster specifications.")
 				fmt.Println("Please fix this by running:")
 				fmt.Println("  aproxymate config fix")
 				fmt.Println("\nThen start the GUI again:")
 				fmt.Printf("  aproxymate gui --port %d\n", port)
+				opCtx.Complete("gui_start", err)
 				os.Exit(1)
 			} else {
-				log.Warn("Failed to load configuration from viper", "error", err)
+				opCtx.Warn("Failed to load configuration from viper", "error", err.Error())
 			}
+		} else {
+			opCtx.Info("Configuration loaded successfully", "num_configs", numConfigs)
 		}
 
 		// Start the GUI server in a goroutine so we can handle browser opening
@@ -84,7 +103,9 @@ Use --no-open flag to disable automatic browser opening.`,
 		serverReady := make(chan bool, 1)
 
 		go func() {
+			log.LogGUIStart(port)
 			if err := gui.Start(port, serverReady); err != nil {
+				log.LogGUIStop(port, err)
 				serverErr <- err
 			}
 		}()
@@ -97,11 +118,16 @@ Use --no-open flag to disable automatic browser opening.`,
 
 				url := fmt.Sprintf("http://localhost:%d", port)
 
+				opCtx.Debug("Attempting to open browser", "url", url)
 				if err := openBrowser(url); err != nil {
-					log.Warn("Failed to open browser automatically", "url", url, "error", err)
-					fmt.Printf("🌐 Could not open browser automatically. Please visit: %s\n", url)
+					outputCtx := lib.NewOutputContext(opCtx)
+					outputCtx.Warn("Failed to open browser automatically", "🌐 Could not open browser automatically. Please visit: %s\n", url)
 				} else {
-					log.Debug("Browser opened successfully", "url", url)
+					opCtx.Debug("Browser opened successfully", "url", url)
+					log.LogUserAction("open_browser", "browser", map[string]any{
+						"url":         url,
+						"auto_opened": true,
+					})
 				}
 			}()
 		} else {
@@ -109,15 +135,18 @@ Use --no-open flag to disable automatic browser opening.`,
 			// to avoid exiting before the server starts
 			go func() {
 				<-serverReady
-				log.Debug("GUI server is ready", "port", port)
+				opCtx.Debug("GUI server is ready", "port", port)
 			}()
 		}
 
 		// Wait for server error or block indefinitely
 		if err := <-serverErr; err != nil {
-			log.Error("Failed to start GUI server", "port", port, "error", err)
+			opCtx.Error("Failed to start GUI server", err, "port", port)
+			opCtx.Complete("gui_start", err)
 			os.Exit(1)
 		}
+
+		opCtx.Complete("gui_start", nil)
 	},
 }
 

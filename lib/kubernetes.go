@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
 
@@ -43,19 +44,28 @@ type SocatProxyConfig struct {
 
 // GetKubernetesClient creates a Kubernetes clientset using provided or default configuration
 func GetKubernetesClient(config KubeConfig) (*kubernetes.Clientset, error) {
+	opCtx, _ := log.StartOperation(context.Background(), "kubernetes", "get_client")
+	defer opCtx.Complete("get_kubernetes_client", nil)
+
 	// If no kubeconfig path provided, try to use default
 	kubeconfigPath := config.KubeconfigPath
 	if kubeconfigPath == "" {
 		if home := homedir.HomeDir(); home != "" {
 			kubeconfigPath = filepath.Join(home, ".kube", "config")
 		} else {
-			return nil, fmt.Errorf("unable to locate kubeconfig: home directory not found and no path provided")
+			err := fmt.Errorf("unable to locate kubeconfig: home directory not found and no path provided")
+			opCtx.Error("Failed to determine kubeconfig path", err)
+			return nil, err
 		}
 	}
 
+	opCtx.Debug("Using kubeconfig", "path", kubeconfigPath, "context", config.Context)
+
 	// Check if kubeconfig file exists
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("kubeconfig file not found at path: %s", kubeconfigPath)
+		err := fmt.Errorf("kubeconfig file not found at path: %s", kubeconfigPath)
+		opCtx.Error("Kubeconfig file not found", err, "path", kubeconfigPath)
+		return nil, err
 	}
 
 	// Build config from the kubeconfig file
@@ -70,15 +80,19 @@ func GetKubernetesClient(config KubeConfig) (*kubernetes.Clientset, error) {
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
 	clientConfig, err := kubeConfig.ClientConfig()
 	if err != nil {
+		opCtx.Error("Failed to create Kubernetes client config", err, "kubeconfig_path", kubeconfigPath, "context", config.Context)
 		return nil, fmt.Errorf("failed to create Kubernetes client config: %w", err)
 	}
 
 	// Create the clientset
 	clientset, err := kubernetes.NewForConfig(clientConfig)
 	if err != nil {
+		opCtx.Error("Failed to create Kubernetes client", err, "kubeconfig_path", kubeconfigPath, "context", config.Context)
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
+	opCtx.Info("Successfully created Kubernetes client", "kubeconfig_path", kubeconfigPath, "context", config.Context)
+	log.LogKubernetesOperation("create_client", config.Context, nil)
 	return clientset, nil
 }
 
@@ -145,6 +159,9 @@ func GetKubernetesContexts(kubeconfigPath string) ([]string, error) {
 		contexts = append(contexts, contextName)
 	}
 
+	// Sort contexts alphabetically
+	sort.Strings(contexts)
+
 	return contexts, nil
 }
 
@@ -209,8 +226,8 @@ func PromptForKubernetesCluster() (string, error) {
 	// If there's only one context, use it automatically
 	if len(contexts) == 1 {
 		selectedContext := contexts[0]
-		fmt.Printf("\nAutomatically selecting the only available cluster: %s\n", selectedContext)
-		log.Debug("Automatically selected single available cluster", "cluster", selectedContext)
+		outputCtx := NewSimpleOutputContext()
+		outputCtx.Info("Automatically selected single available cluster", "\nAutomatically selecting the only available cluster: %s\n", selectedContext)
 		return selectedContext, nil
 	}
 
@@ -259,6 +276,9 @@ func PromptForKubernetesCluster() (string, error) {
 
 // CreateSocatProxyPod creates a pod running socat to proxy traffic
 func CreateSocatProxyPod(clientset *kubernetes.Clientset, config SocatProxyConfig) (*corev1.Pod, error) {
+	opCtx, _ := log.StartOperation(context.Background(), "kubernetes", "create_socat_pod")
+	defer opCtx.Complete("create_socat_pod", nil)
+
 	// Default to "default" namespace if not specified
 	namespace := config.Namespace
 	if namespace == "" {
@@ -271,15 +291,29 @@ func CreateSocatProxyPod(clientset *kubernetes.Clientset, config SocatProxyConfi
 		podName = fmt.Sprintf("socat-proxy-%d", time.Now().Unix())
 	}
 
+	opCtx.Debug("Creating socat proxy pod",
+		"pod_name", podName,
+		"namespace", namespace,
+		"listen_port", config.ListenPort,
+		"remote_host", config.RemoteHost,
+		"remote_port", config.RemotePort,
+	)
+
 	// Validate required fields
 	if config.RemoteHost == "" {
-		return nil, fmt.Errorf("remote host is required")
+		err := fmt.Errorf("remote host is required")
+		opCtx.Error("Invalid configuration", err, "missing_field", "remote_host")
+		return nil, err
 	}
 	if config.RemotePort <= 0 {
-		return nil, fmt.Errorf("valid remote port is required")
+		err := fmt.Errorf("valid remote port is required")
+		opCtx.Error("Invalid configuration", err, "invalid_field", "remote_port", "value", config.RemotePort)
+		return nil, err
 	}
 	if config.ListenPort <= 0 {
-		return nil, fmt.Errorf("valid listen port is required")
+		err := fmt.Errorf("valid listen port is required")
+		opCtx.Error("Invalid configuration", err, "invalid_field", "listen_port", "value", config.ListenPort)
+		return nil, err
 	}
 
 	// Create socat command
@@ -337,14 +371,31 @@ func CreateSocatProxyPod(clientset *kubernetes.Clientset, config SocatProxyConfi
 	}
 
 	// Create the pod
+	timer := log.StartTimer("pod_creation")
 	createdPod, err := clientset.CoreV1().Pods(namespace).Create(
 		context.Background(),
 		pod,
 		metav1.CreateOptions{},
 	)
+	timer.Stop()
+
 	if err != nil {
+		opCtx.Error("Failed to create socat proxy pod", err,
+			"pod_name", podName,
+			"namespace", namespace,
+			"socat_command", socatCommand,
+			"socat_target", socatTarget,
+		)
+		log.LogKubernetesPodOperation("create", podName, namespace, "", err)
 		return nil, fmt.Errorf("failed to create socat proxy pod: %w", err)
 	}
+
+	opCtx.Info("Successfully created socat proxy pod",
+		"pod_name", createdPod.Name,
+		"namespace", createdPod.Namespace,
+		"uid", string(createdPod.UID),
+	)
+	log.LogKubernetesPodOperation("create", podName, namespace, "", nil)
 
 	return createdPod, nil
 }
@@ -394,6 +445,9 @@ func DeleteSocatProxyPod(clientset *kubernetes.Clientset, namespace, podName str
 
 // CleanupOrphanedAproxymatePodsForUser cleans up any orphaned aproxymate pods for the current user
 func CleanupOrphanedAproxymatePodsForUser(clientset *kubernetes.Clientset, namespace string) error {
+	opCtx, _ := log.StartOperation(context.Background(), "kubernetes", "cleanup_user_pods")
+	defer opCtx.Complete("cleanup_user_pods", nil)
+
 	if namespace == "" {
 		namespace = "default"
 	}
@@ -406,6 +460,8 @@ func CleanupOrphanedAproxymatePodsForUser(clientset *kubernetes.Clientset, names
 		currentUser = u
 	}
 
+	opCtx.Debug("Starting cleanup of orphaned pods", "namespace", namespace, "user", currentUser)
+
 	// List all aproxymate pods for this user
 	listOptions := metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("aproxymate.managed=true,user=%s", currentUser),
@@ -413,27 +469,35 @@ func CleanupOrphanedAproxymatePodsForUser(clientset *kubernetes.Clientset, names
 
 	pods, err := clientset.CoreV1().Pods(namespace).List(context.Background(), listOptions)
 	if err != nil {
+		opCtx.Error("Failed to list aproxymate pods", err, "namespace", namespace, "user", currentUser)
 		return fmt.Errorf("failed to list aproxymate pods: %w", err)
 	}
 
 	// Only log if there are orphaned pods to clean up
 	if len(pods.Items) > 0 {
-		log.Debug("Found orphaned aproxymate pods for cleanup", "user", currentUser, "count", len(pods.Items))
+		opCtx.Debug("Found orphaned aproxymate pods for cleanup", "user", currentUser, "count", len(pods.Items))
 	}
 
 	// Delete each pod
 	for _, pod := range pods.Items {
-		log.Debug("Cleaning up orphaned pod", "pod", pod.Name, "user", currentUser)
+		opCtx.Debug("Cleaning up orphaned pod", "pod", pod.Name, "user", currentUser, "namespace", namespace)
+		log.LogPodCleanup("delete_orphaned", pod.Name, namespace, nil)
+
 		err := clientset.CoreV1().Pods(namespace).Delete(
 			context.Background(),
 			pod.Name,
 			metav1.DeleteOptions{},
 		)
 		if err != nil {
-			log.Warn("Failed to delete orphaned pod", "pod", pod.Name, "error", err)
+			opCtx.Warn("Failed to delete orphaned pod", "pod", pod.Name, "error", err.Error())
+			log.LogPodCleanup("delete_orphaned", pod.Name, namespace, err)
 		} else {
-			log.Debug("Successfully deleted orphaned pod", "pod", pod.Name)
+			opCtx.Debug("Successfully deleted orphaned pod", "pod", pod.Name)
 		}
+	}
+
+	if len(pods.Items) > 0 {
+		opCtx.Info("Completed cleanup of orphaned pods", "cleaned_count", len(pods.Items), "user", currentUser)
 	}
 
 	return nil

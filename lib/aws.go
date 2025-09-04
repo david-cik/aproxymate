@@ -33,7 +33,10 @@ type RDSEndpoint struct {
 
 // GetAWSRDSEndpoints fetches all RDS endpoints from the specified AWS account/region
 func GetAWSRDSEndpoints(ctx context.Context, awsConfig AWSConfig) ([]RDSEndpoint, error) {
-	log.Debug("Fetching RDS endpoints from AWS", "region", awsConfig.Region, "profile", awsConfig.Profile)
+	opCtx, _ := log.StartOperation(ctx, "aws", "fetch_rds_endpoints")
+	defer opCtx.Complete("fetch_rds_endpoints", nil)
+
+	opCtx.Debug("Fetching RDS endpoints from AWS", "region", awsConfig.Region, "profile", awsConfig.Profile)
 
 	// AWS profile is now required
 	if awsConfig.Profile == "" {
@@ -66,7 +69,8 @@ func GetAWSRDSEndpoints(ctx context.Context, awsConfig AWSConfig) ([]RDSEndpoint
 	// Get RDS instances
 	instances, err := getAllRDSInstances(ctx, rdsClient)
 	if err != nil {
-		log.Error("Failed to fetch RDS instances", "error", err)
+		opCtx.Error("Failed to fetch RDS instances", err)
+		log.LogAWSOperation("describe_db_instances", awsConfig.Region, awsConfig.Profile, err)
 		return nil, fmt.Errorf("failed to fetch RDS instances: %w", err)
 	}
 
@@ -92,7 +96,8 @@ func GetAWSRDSEndpoints(ctx context.Context, awsConfig AWSConfig) ([]RDSEndpoint
 	// Get RDS clusters
 	clusters, err := getAllRDSClusters(ctx, rdsClient)
 	if err != nil {
-		log.Error("Failed to fetch RDS clusters", "error", err)
+		opCtx.Error("Failed to fetch RDS clusters", err)
+		log.LogAWSOperation("describe_db_clusters", awsConfig.Region, awsConfig.Profile, err)
 		return nil, fmt.Errorf("failed to fetch RDS clusters: %w", err)
 	}
 
@@ -112,7 +117,8 @@ func GetAWSRDSEndpoints(ctx context.Context, awsConfig AWSConfig) ([]RDSEndpoint
 		}
 	}
 
-	log.Debug("Successfully fetched RDS endpoints", "total_endpoints", len(endpoints))
+	opCtx.Debug("Successfully fetched RDS endpoints", "total_endpoints", len(endpoints))
+	log.LogAWSOperation("fetch_rds_endpoints", awsConfig.Region, awsConfig.Profile, nil)
 	return endpoints, nil
 }
 
@@ -424,6 +430,36 @@ func FilterRDSEndpointsByEngine(endpoints []RDSEndpoint, engines []string) []RDS
 		"original_count", len(endpoints),
 		"filtered_count", len(filtered),
 		"engines", engines)
+
+	return filtered
+}
+
+// FilterRDSEndpointsByName filters RDS endpoints by name patterns
+func FilterRDSEndpointsByName(endpoints []RDSEndpoint, names []string) []RDSEndpoint {
+	if len(names) == 0 {
+		return endpoints
+	}
+
+	var filtered []RDSEndpoint
+	for _, endpoint := range endpoints {
+		for _, name := range names {
+			// Skip empty names
+			trimmedName := strings.TrimSpace(name)
+			if trimmedName == "" {
+				continue
+			}
+			// Case-insensitive substring matching
+			if strings.Contains(strings.ToLower(endpoint.Identifier), strings.ToLower(trimmedName)) {
+				filtered = append(filtered, endpoint)
+				break // Found a match, no need to check other names for this endpoint
+			}
+		}
+	}
+
+	log.Debug("Filtered RDS endpoints by name",
+		"original_count", len(endpoints),
+		"filtered_count", len(filtered),
+		"names", names)
 
 	return filtered
 }

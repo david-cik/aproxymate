@@ -11,6 +11,6 @@ import (
 func main() {
 	// Initialize logger with default settings
 	logger.InitDefaultLogger()
-	
+
 	cmd.Execute()
 }
