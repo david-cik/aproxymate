@@ -422,29 +422,6 @@ func LogProxyOperation(operation string, cluster string, host string, localPort 
 	}
 }
 
-// LogProxyLifecycle logs proxy lifecycle events (start, stop, restart)
-func LogProxyLifecycle(event, proxyName, cluster string, localPort int, err error) {
-	baseAttrs := []any{
-		"event", event,
-		"proxy_name", proxyName,
-		"cluster", cluster,
-		"local_port", localPort,
-		"component", "proxy",
-		"event_type", "lifecycle",
-	}
-
-	if err != nil {
-		attrs := append(baseAttrs,
-			"error", err.Error(),
-			"result", "failed",
-		)
-		AppLogger.Debug("Proxy lifecycle event failed", attrs...)
-	} else {
-		attrs := append(baseAttrs, "result", "success")
-		AppLogger.Debug("Proxy lifecycle event", attrs...)
-	}
-}
-
 // LogPodCleanup logs pod cleanup operations with namespace details
 func LogPodCleanup(operation string, podName string, namespace string, err error) {
 	baseAttrs := []any{
@@ -465,17 +442,6 @@ func LogPodCleanup(operation string, podName string, namespace string, err error
 		attrs := append(baseAttrs, "result", "success")
 		AppLogger.Debug("Pod cleanup operation successful", attrs...)
 	}
-}
-
-// LogProcessMonitor logs process monitoring events with enhanced context
-func LogProcessMonitor(processType string, pid int, status string) {
-	AppLogger.Debug("Process status update",
-		"type", processType,
-		"pid", pid,
-		"status", status,
-		"component", "process_monitor",
-		"timestamp", time.Now().Format(time.RFC3339),
-	)
 }
 
 // LogAWSOperation logs AWS-related operations
@@ -605,31 +571,6 @@ func maskAccessKey(accessKey string) string {
 		return strings.Repeat("*", len(accessKey))
 	}
 	return accessKey[:4] + strings.Repeat("*", len(accessKey)-8) + accessKey[len(accessKey)-4:]
-}
-
-// WithContext returns a logger with context values
-func WithContext(ctx context.Context) *slog.Logger {
-	logger := AppLogger
-
-	if opID := ctx.Value(OperationIDKey); opID != nil {
-		logger = logger.With("operation_id", opID)
-	}
-
-	if component := ctx.Value(ComponentKey); component != nil {
-		logger = logger.With("component", component)
-	}
-
-	return logger
-}
-
-// WithComponent returns a logger with component context
-func WithComponent(component string) *slog.Logger {
-	return AppLogger.With("component", component)
-}
-
-// WithOperation returns a logger with operation context
-func WithOperation(operation string) *slog.Logger {
-	return AppLogger.With("operation", operation)
 }
 
 // Debug logs at debug level with caller information

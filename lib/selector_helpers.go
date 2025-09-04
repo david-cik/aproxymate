@@ -48,34 +48,6 @@ func SelectFromSlice[T ~string](title string, items []T, emptyMessage string) (T
 	return selected, nil
 }
 
-// SelectWithDisplayFunc is a generic convenience function for selecting items with a custom display function
-func SelectWithDisplayFunc[T any](title string, items []T, displayFunc func(T) string, emptyMessage string) (T, error) {
-	var zero T
-	if len(items) == 0 {
-		return zero, fmt.Errorf("no items available")
-	}
-
-	config := SelectorConfig[T]{
-		Title:         title,
-		Items:         items,
-		DisplayFunc:   displayFunc,
-		EmptyMessage:  emptyMessage,
-		CancelMessage: "Selection cancelled",
-		AllowEmpty:    true,
-	}
-
-	selected, cancelled, err := RunSelector(config)
-	if err != nil {
-		return zero, fmt.Errorf("failed to run selection: %w", err)
-	}
-
-	if cancelled {
-		return zero, fmt.Errorf("selection cancelled")
-	}
-
-	return selected, nil
-}
-
 // SelectKubernetesClusterTUI uses the generic selector for cluster selection
 func SelectKubernetesClusterTUI(invalidCluster string) (string, error) {
 	clusters, err := GetKubernetesContexts("")

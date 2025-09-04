@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"time"
 
 	log "aproxymate/lib/logger"
@@ -188,90 +187,6 @@ func GetCurrentKubernetesContext(kubeconfigPath string) (string, error) {
 	}
 
 	return config.CurrentContext, nil
-}
-
-// PromptForKubernetesCluster prompts the user to select a Kubernetes cluster when none is specified
-func PromptForKubernetesCluster() (string, error) {
-	log.Debug("No Kubernetes cluster specified, looking up available clusters")
-
-	contexts, err := GetKubernetesContexts("")
-	if err != nil {
-		return "", fmt.Errorf("failed to get available Kubernetes contexts: %w", err)
-	}
-
-	if len(contexts) == 0 {
-		return "", fmt.Errorf("no Kubernetes contexts found in kubeconfig. Please ensure kubectl is configured with at least one cluster")
-	}
-
-	// Get current context as a default suggestion
-	currentContext, err := GetCurrentKubernetesContext("")
-	if err != nil {
-		log.Debug("Could not determine current context", "error", err)
-		currentContext = ""
-	}
-
-	fmt.Println("\n🔍 No Kubernetes cluster specified in configuration.")
-	fmt.Printf("Found %d available cluster(s) in your kubeconfig:\n\n", len(contexts))
-
-	// Display available contexts with numbering
-	for i, context := range contexts {
-		prefix := fmt.Sprintf("%d.", i+1)
-		if context == currentContext {
-			fmt.Printf("  %s %s (current)\n", prefix, context)
-		} else {
-			fmt.Printf("  %s %s\n", prefix, context)
-		}
-	}
-
-	// If there's only one context, use it automatically
-	if len(contexts) == 1 {
-		selectedContext := contexts[0]
-		outputCtx := NewSimpleOutputContext()
-		outputCtx.Info("Automatically selected single available cluster", "\nAutomatically selecting the only available cluster: %s\n", selectedContext)
-		return selectedContext, nil
-	}
-
-	// If there's a current context, suggest it as default
-	if currentContext != "" {
-		fmt.Printf("\nPress Enter to use the current context (%s), or enter a cluster name/number: ", currentContext)
-	} else {
-		fmt.Print("\nEnter the cluster name or number to use: ")
-	}
-
-	// Read user input
-	var input string
-	fmt.Scanln(&input)
-
-	// If empty input and we have a current context, use it
-	if input == "" && currentContext != "" {
-		log.Debug("Using current context as default", "cluster", currentContext)
-		return currentContext, nil
-	}
-
-	// If empty input and no current context, prompt again
-	if input == "" {
-		return "", fmt.Errorf("no cluster selected. Please specify a cluster name or number")
-	}
-
-	// Check if input is a number
-	if num, err := strconv.Atoi(input); err == nil {
-		if num < 1 || num > len(contexts) {
-			return "", fmt.Errorf("invalid selection: %d. Please choose a number between 1 and %d", num, len(contexts))
-		}
-		selectedContext := contexts[num-1]
-		log.Debug("Selected cluster by number", "number", num, "cluster", selectedContext)
-		return selectedContext, nil
-	}
-
-	// Check if input matches a context name
-	for _, context := range contexts {
-		if context == input {
-			log.Debug("Selected cluster by name", "cluster", context)
-			return context, nil
-		}
-	}
-
-	return "", fmt.Errorf("cluster '%s' not found. Available clusters: %v", input, contexts)
 }
 
 // CreateSocatProxyPod creates a pod running socat to proxy traffic
@@ -498,45 +413,6 @@ func CleanupOrphanedAproxymatePodsForUser(clientset *kubernetes.Clientset, names
 
 	if len(pods.Items) > 0 {
 		opCtx.Info("Completed cleanup of orphaned pods", "cleaned_count", len(pods.Items), "user", currentUser)
-	}
-
-	return nil
-}
-
-// CleanupAllOrphanedAproxymatePodsInNamespace cleans up all aproxymate pods in a namespace
-func CleanupAllOrphanedAproxymatePodsInNamespace(clientset *kubernetes.Clientset, namespace string) error {
-	if namespace == "" {
-		namespace = "default"
-	}
-
-	// List all aproxymate pods
-	listOptions := metav1.ListOptions{
-		LabelSelector: "aproxymate.managed=true",
-	}
-
-	pods, err := clientset.CoreV1().Pods(namespace).List(context.Background(), listOptions)
-	if err != nil {
-		return fmt.Errorf("failed to list aproxymate pods: %w", err)
-	}
-
-	// Only log if there are orphaned pods to clean up
-	if len(pods.Items) > 0 {
-		log.Debug("Found orphaned aproxymate pods for cleanup", "namespace", namespace, "count", len(pods.Items))
-	}
-
-	// Delete each pod
-	for _, pod := range pods.Items {
-		log.Debug("Cleaning up orphaned pod", "pod", pod.Name, "namespace", namespace)
-		err := clientset.CoreV1().Pods(namespace).Delete(
-			context.Background(),
-			pod.Name,
-			metav1.DeleteOptions{},
-		)
-		if err != nil {
-			log.Warn("Failed to delete orphaned pod", "pod", pod.Name, "namespace", namespace, "error", err)
-		} else {
-			log.Debug("Successfully deleted orphaned pod", "pod", pod.Name, "namespace", namespace)
-		}
 	}
 
 	return nil

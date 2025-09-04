@@ -365,21 +365,6 @@ func maskAccessKey(accessKey string) string {
 	return accessKey[:4] + strings.Repeat("*", len(accessKey)-4)
 }
 
-// GetDefaultRegion attempts to get the default AWS region
-func GetDefaultRegion(ctx context.Context) string {
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		log.Debug("Failed to load AWS config for region detection", "error", err)
-		return "us-east-1" // fallback to us-east-1
-	}
-
-	if cfg.Region == "" {
-		return "us-east-1" // fallback to us-east-1
-	}
-
-	return cfg.Region
-}
-
 // getNextPortFromConfig finds the next available port by examining existing configurations
 func getNextPortFromConfig(configs []ProxyConfig) int {
 	if len(configs) == 0 {
